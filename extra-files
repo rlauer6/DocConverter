@@ -1,0 +1,4 @@
+doc-converter.cfg share/doc-converter.cfg
+doc-converter.conf share/doc-converter.conf
+README.md share/README.md
+ChangeLog share/ChangeLog

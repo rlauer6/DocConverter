@@ -1,0 +1,28 @@
+Mon Jun 16 06:35:14 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[BigBang]:
+	* .gitignore: new
+	* ChangeLog: new
+	* Dockerfile: new
+	* Makefile: new
+	* README.md: new
+	* bin/doc-converter.pl: new
+	* bin/doc2pdf: new
+	* bin/doc2pdf-client.pl: new
+	* bin/fix-OOXMLRecalcMode.pl: new
+	* bookworm-backports.list: new
+	* buildspec.yml: new
+	* doc-converter.cfg: new
+	* doc-converter.conf: new
+	* docker-compose.yml: new
+	* extra-files: new
+	* lib/DocConverter.pm: new
+	* lib/DocConverter/Constants.pm: new
+	* lib/DocConverter/Utils.pm: new
+	* provides: new
+	* requires: new
+	* t/00-doc-converter.t: new
+	* test-requires: new
+
+
+

@@ -1,0 +1,29 @@
+project:
+  description: DocConverter
+  author:
+    name: Rob Lauer
+    mailto: rclauer@gmail.com
+pm_module: DocConverter
+min-perl-version: 5.010
+dependencies:
+  requires: requires
+  test_requires: test-requires
+path:
+  pm_module: lib
+  scripts: bin
+  tests: t
+extra-files:
+  - share:
+    - doc-converter.cfg
+    - doc-converter.conf
+    - README.md
+    - ChangeLog
+resources:
+  homepage: http://github.com/rlauer6/DocConverter
+  bugtracker:
+    web: http://github.com/rlauer6/DocConverter
+    mailto: rclauer@gmail.com
+  repository:
+    url: git://github.com/rlauer6/DocConverter
+    web: http://github.com/rlauer6/DocConverter
+    type: 'git'
