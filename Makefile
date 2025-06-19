@@ -7,13 +7,20 @@ MODULE_NAME := DocConverter
 MODULE_PATH := $(subst ::,/,$(MODULE_NAME)).pm
 
 PERL_MODULES = \
-    lib/$(MODULE_PATH) \
-    lib/DocConverter/Utils.pm \
-    lib/DocConverter/Constants.pm
+    lib/$(MODULE_PATH).in \
+    lib/DocConverter/Utils.pm.in \
+    lib/DocConverter/Constants.pm.in
 
-VERSION := $(shell perl -I lib -M$(MODULE_NAME) -e 'print $$$(MODULE_NAME)::VERSION;')
+VERSION := $(shell cat VERSION)
+
+GPERL_MODULES = $(PERL_MODULES:.pm.in=.pm)
+
+%.pm: %.pm.in
+	sed "s/[@]PACKAGE_VERSION[@]/$(VERSION)/g" $< > $@
 
 TARBALL = $(subst ::,-,$(MODULE_NAME))-$(VERSION).tar.gz
+
+$(GPERL_MODULES): $(PERL_MODULES)
 
 $(TARBALL): buildspec.yml $(PERL_MODULES) requires test-requires README.md
 	make-cpan-dist.pl -b $<

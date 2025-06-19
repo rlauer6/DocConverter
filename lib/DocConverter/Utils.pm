@@ -26,6 +26,7 @@ use DocConverter::Constants;
 use File::Basename;
 use File::HomeDir;
 use File::Temp qw(tempfile tempdir);
+use Log::Log4perl qw(:easy);
 use Log::Log4perl::Level;
 use HTTP::Request;
 use LWP::UserAgent;
@@ -34,11 +35,12 @@ use JSON;
 use parent qw(Exporter);
 
 our @EXPORT = qw(
-  put_to_s3
-  get_from_s3
-  list_bucket
   $LOGGER
   $LOG_LEVEL
+  fetch_from_s3
+  init_logger
+  list_bucket
+  put_to_s3
 );
 
 our $LOGGER;
@@ -70,7 +72,7 @@ sub put_to_s3 {
 }
 
 ########################################################################
-sub get_from_s3 {
+sub fetch_from_s3 {
 ########################################################################
   my ( $bucket, $document_id, $file ) = @_;
 

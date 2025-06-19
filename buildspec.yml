@@ -12,12 +12,16 @@ path:
   pm_module: lib
   scripts: bin
   tests: t
+postamble: postamble
 extra-files:
+  - postamble
   - share:
     - doc-converter.cfg
     - doc-converter.conf
     - README.md
     - ChangeLog
+    - resume-long.docx
+    - postamble
 resources:
   homepage: http://github.com/rlauer6/DocConverter
   bugtracker:

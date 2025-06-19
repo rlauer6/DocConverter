@@ -1,3 +1,48 @@
+Thu Jun 19 06:44:19 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[0.01]:
+	* bin/apply_private_policy_and_lifecycle.sh: new
+	* bin/setup_ecs_s3_access.sh: new
+	* postamble: new
+	* resume-long.docx: new
+	* .gitignore: DocConvert*/**, *.log, *.pdf, *.png
+	* Dockerfile
+	- + poppler-utils, ghostscript
+	- mod_actions
+	- install .conf to conf-available
+	- install doc-converter.cgi
+	* README.md: generated
+	* bin/doc-converter.pl
+	(slurp): new
+	(fatal_error): return as JSON
+	(fetch_config): fix sprintf bug
+	(convert_document): refactors
+	(main)
+	- hard coded for LocalStack for now
+	- refactors
+	* bin/doc2pdf-client.pl
+	- new options: --dns-bucket-names, --download, --secure, --config, --log-level, --s3-host
+	- remove aws credential options
+	(convert_document): refactors
+	(main)
+	(normalize_options): new
+	(fetch_config): new
+	(get_options): new
+	(is_web_context): new
+	(main)
+	- setup for LocalStack if host is not s3.amazon.com
+	- print details as hash or array
+	* buildspec.yml
+	(postamble): new
+	(extra_files): + postamble, resume-long.docx
+	* doc-converter.cfg: use template for doc2pdf path
+	* extra-files: removed
+	* lib/DocConverter/Utils.pm
+	(@EXPORT): +fetch_from_s3, init_logger
+	(get_from_s3): renamed to fetch_from_s3
+	* postamble: new
+	* requires: +CGI
+
 Mon Jun 16 06:35:14 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[BigBang]:

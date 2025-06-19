@@ -20,6 +20,9 @@
 use strict;
 use warnings;
 
+use Carp;
+use Carp::Always;
+
 use Amazon::Credentials;
 use Carp;
 use DocConverter::Utils;
@@ -28,7 +31,7 @@ use Data::Dumper;
 use Data::UUID;
 use English qw(-no_match_vars);
 use File::Basename;
-use File::Temp qw/tempdir tempfile/;
+use File::Temp qw(tempdir tempfile);
 use Getopt::Long qw(:config no_ignore_case);
 use HTTP::Request;
 use JSON;
@@ -48,21 +51,27 @@ remote document converter service.
  -b, --bucket                   Amazon S3 bucket to fill
  -d, --debug                    simulate conversion
  -D, --document-id              key prefix in bucket of file
+     --dns-bucket-names         whether to enable DNS buckets names when making S3 requests
+     --download                 download the file after it has been converted
  -h, --help                     usage
  -H, --host                     host name of service (default: localhost)
  -k, --key                      key in bucket (document-id/file-name)
- -K, --aws-access-key-id        AWS access key id
  -m, --mime-type                MIME type of the input stream
  -n, --name                     Name for the input stream or the name of an existing file to convert
  -p, --pdf                      create a pdf (default), use --nopdf if you don't want one
  -P, --page                     use page N as the page for thumbs, defaults to page 1
  -s, --sleep                    time in seconds to sleep between status checks (default: 1s)
  -S, --aws-secret-key           AWS secret key
+     --secure                   whether to use http or https when connecting to S3 endpoint, default: true
  -t, --timeout                  timeout in seconds
- -T, --thumbs                   on or more strings (hxw,hxw,...) representing thumbnail sizes,
+ -T, --thumb                    on or more strings (hxw,hxw,...) representing thumbnail sizes,
 
 Example: doc2pdf-client -b mybucket foo.xlsx
 
+Notes
+-----
+1. If you set host to 'localhost[:port]', --secure and --dns-bucket-names will be set to false
+ 
 EOM
 
   exit 1;
@@ -114,7 +123,16 @@ sub convert_document {
     'x-doc-converter-id' => $document_id,
   );
 
-  my $req = HTTP::Request->new( POST => $url, \@headers, to_json( \%options ) );
+  my $req = HTTP::Request->new(
+    POST => $url,
+    \@headers,
+    to_json(
+      { bucket => $options{bucket},
+        pdf    => $options{pdf},
+        thumb  => $options{thumb},
+      }
+    )
+  );
 
   my $rsp = $ua->request($req);
 
@@ -170,42 +188,93 @@ sub convert_document {
 }
 
 ########################################################################
-sub main {
+sub normalize_options {
 ########################################################################
+  my ($options) = @_;
 
+  foreach my $k ( keys %{$options} ) {
+    next if $k !~ /\-/xsm;
+
+    my $v = $options->{$k};
+    $k =~ s/\-/_/gxsm;
+    $options->{$k} = $v;
+  }
+
+  return $options;
+}
+
+########################################################################
+sub fetch_config {
+########################################################################
+  my ($options) = @_;
+
+  return
+    if !$options->{config};
+
+  my $config = eval { to_json( slurp( $options->{config} ) ); };
+
+  foreach ( keys %{$config} ) {
+    $options->{$_} = $config->{$_};
+  }
+
+  return $options;
+}
+
+########################################################################
+sub is_web_context {
+########################################################################
+  return $ENV{SERVER_SIGNATURE};
+}
+
+########################################################################
+sub get_options {
+########################################################################
   my @option_specs = qw(
     bucket=s
+    config=s
     debug
     document-id|D=s
     help|h
     host|H=s
     key=s
+    log-level|l=s
     mime-type=s
     name=s
+    output
     page|P=i
     pdf!
     protocol=s
+    s3-host=s
     sleep=i
     thumb=s@
     timeout|T=s
     url=s
-    log-level|l=s
   );
 
   # defaults
   my %options = (
+    'log-level' => 'info',
+    bucket      => $ENV{DOC_CONVERTER_BUCKET},
+    host        => $ENV{DOC_CONVERTER_HOST} || 'localhost',
+    page        => 1,
     pdf         => $TRUE,
     protocol    => 'http',
-    host        => $ENV{DOC_CONVERTER_HOST}    || 'localhost',
-    timeout     => $ENV{DOC_CONVERTER_TIMEOUT} || $DEFAULT_TIMEOUT,
-    bucket      => $ENV{DOC_CONVERTER_BUCKET},
     sleep       => $DEFAULT_SLEEP_INTERVAL,
-    page        => 1,
-    'log-level' => 'info',
+    timeout     => $ENV{DOC_CONVERTER_TIMEOUT} || $DEFAULT_TIMEOUT,
   );
 
   GetOptions( \%options, @option_specs )
     or usage();
+
+  normalize_options( \%options );
+
+  return %options;
+}
+
+########################################################################
+sub main {
+########################################################################
+  my %options = get_options();
 
   if ( $options{key} ) {
     if ( $options{key} =~ /([0-9A-F]{8}\-[0-9A-F]{4}\-[0-9A-F]{4}\-[0-9A-F]{4}\-[0-9A-F]{12})\/([^\/]*)$/xsm ) {
@@ -214,7 +283,7 @@ sub main {
     }
   }
 
-  init_logger( $options{log_level} );
+  init_logger( $options{'log-level'} );
 
   $LOGGER->debug( Dumper( [ options => \%options ] ) );
 
@@ -256,10 +325,18 @@ sub main {
     $options{name} = sprintf '%s%s', $name, $mime_type ? $DocConverter::Utils::MIME_TYPES{$mime_type} : $ext;
   }
 
+  $options{'s3-host'} //= 's3.amazonaws.com';
+  if ( $options{'s3-host'} ne 's3.amazonaws.com' ) {
+    $options{dns_bucket_names} = $FALSE;
+    $options{secure}           = $FALSE;
+  }
+
   my $s3 = eval {
     Amazon::S3->new(
-      { aws_secret_access_key => $options{aws_secret_access_key},
-        aws_access_key_id     => $options{aws_access_key_id},
+      { credentials      => $credentials,
+        host             => $options{'s3-host'},
+        secure           => $options{secure},
+        dns_bucket_names => $options{'dns_bucket_names'},
         exists $options{token} ? ( 'token', $options{token} ) : ()
       }
     );
@@ -333,7 +410,7 @@ sub main {
       );
 
       if ($result) {
-        $LOGGER->info( to_json( $result, { pretty => $TRUE } ) );
+        $LOGGER->debug( to_json( $result, { pretty => $TRUE } ) );
         push @details, $result;
       }
     }
@@ -367,10 +444,16 @@ sub main {
     }
   }
 
-  print to_json( \@details, { pretty => 1 } ) if @details;
+  my $details_json = @details > 1 ? \@details : $details[0];
+
+  if ($details_json) {
+    print to_json( \@details, { pretty => 1 } );
+  }
 
   return 0;
 }
+
+exit main();
 
 1;
 
@@ -380,19 +463,18 @@ __END__
 
 =head1 NAME
 
- doc2pdf-client
+doc2pdf-client.pl
 
 =head1 SYNOPSIS
 
- doc2pdf-client --host 10.0.1.198 --bucket mybucket \
-                --aws_secret_access_key=your-secret-key --aws_access_key_id=your-key-id foo.xlsx
+ doc2pdf-client.pl --host 10.0.1.198 --bucket mybucket foo.xlsx
 
 =head1 DESCRIPTION
 
 Converts .doc[x],.xls[x],.txt,.png, or .jpg files to PDF using a
 remote document conversion service based on LibreOfficeE<039>s
 I<headless> mode.  Files are sent from the client to an S3 bucket on
-which you (and the service) both have read and write permissions.  For
+which you (and the service) both have read and write permissions. For
 each file sent, a PDF file is created.  Optionally, the conversion
 process can create thumbnail previews of specified sizes.
 
@@ -400,12 +482,15 @@ process can create thumbnail previews of specified sizes.
 
 The C<doc2pdf-client> utility is part of the C<doc-converter>
 service. It is, as the name suggests a client side utility.  The
-server does the heavy lefting of converting documents to PDFs using
+server does the heavy lifting of converting documents to PDFs using
 LibreOffice.  Essentially, the client sends a file to an S3 bucket,
-requests that the C<doc-converter> service do some magic and then may
+requests that the C<doc-converter> service do some magic and then can
 poll the service until the conversion is complete. The client can
 proceed to retrieve the PDF from the bucket or leave it there, your
 choice...the document serviceE<039>s job is done.
+
+I<NOTE: If you want to retrieve the file with this client, use the
+--outputoption.>
 
 In summary it works like this:
 
@@ -454,7 +539,7 @@ bucket.
 
 A utility for creating an appropriate role and and policy is provided
 for you as part of this project.  The role can then be assigned to the
-`doc-converter` server during the stack creation phase so that it has
+`doc-converter` server or your ECS task so that it has
 access to the S3 bucket used to store documents.  In this way, you do
 not need to provision access credentials for the document conversion
 server.
@@ -471,17 +556,9 @@ Add an appropriate role:
 
  $ doc-converter-add-role -R bucket-writer -B mybucket
 
-Provision the document conversion server:
-
- $ libreoffice-create-stack -k mykey -R bucket-writer -S subnet-6033e039
-
 Take a look at:
 
  $ doc-convert-add-role -h
-
-...and
-
- $ libreoffice-create-stack -h
 
 C<doc2pdf-client> will send one or more files to the bucket for you,
 but the client utility can be used to just POST the request or just
@@ -495,8 +572,6 @@ attributes of the file.
 
 You POST a JSON file that contains options to a URL that includes the
 bucket, a document identifier and the filename.  
-
-  http://10.0.1.198/converter/mybucket/FCA577DA-8120-11E5-BB37-95249020DED9/foo.xlsx
 
 The C<doc-converter> client will actually do all that for you,
 including creating a unique document identifier. The document
@@ -734,13 +809,22 @@ substitutes for the command line arguments.
 
  --timeout
 
-=item AWS_ACCESS_KEY_ID
+=back
 
-  --aws_access_key_id
+=head1 AWS CREDENTIALS
+
+This process uses L<Amazon::Credentials> to look in the usual places
+for AWS credentials. You can also set these environment variables.
+
+=over 5
+
+=item AWS_ACCESS_KEY_ID
 
 =item AWS_SECRET_ACCESS_KEY
 
- --aws_secret_access_key
+=item AWS_SESSION_TOKEN
+
+=item AWS_PROFILE
 
 =back
 

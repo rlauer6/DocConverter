@@ -1,4 +1,8 @@
+volume/
 *.tmp
 *.tar.gz
-DocConverter/**
+DocConverter*/**
 resources
+*.pdf
+*.log
+*.png

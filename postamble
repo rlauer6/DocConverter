@@ -1,0 +1,13 @@
+#-*- mode: makefile; -*-
+postamble ::
+
+install::
+	echo "installing postamble"
+	sharedir=$$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocConverter});'); \
+	bindir=$(INSTALLSITEBIN); \
+	tmpfile=$$(mktemp); \
+	sed "s|@bindir@|$$bindir|" $$sharedir/doc-converter.cfg  >$$tmpfile; \
+	cp -f $$tmpfile $$sharedir/doc-converter.cfg; rm $$tmpfile
+	cat /etc/ImageMagick-6/policy.xml | \
+	  sed 's/rights="none" pattern="PDF"/rights="read\|write" pattern=PDF/'
+

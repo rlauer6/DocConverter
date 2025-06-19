@@ -32,9 +32,27 @@ use English qw(-no_match_vars);
 use File::Basename;
 use File::Temp qw(tempdir tempfile);
 use File::ShareDir qw(dist_dir);
+use Log::Log4perl::Level;
 use JSON;
 use Scalar::Util qw(reftype);
 use Time::HiRes qw(gettimeofday tv_interval);
+
+########################################################################
+sub slurp {
+########################################################################
+  my ($file) = @_;
+
+  open my $fh, '<', $file
+    or croak 'could not open file ' . $file . ' for reading';
+
+  local $RS = undef;
+
+  my $content = <$fh>;
+
+  close $fh;
+
+  return $content;
+}
 
 ########################################################################
 sub pdfinfo {
@@ -127,11 +145,13 @@ sub fatal_error {
 
   $LOGGER->error("fatal error: $err");
 
+  my $error_payload = to_json( { error => $err } );
+
   print <<"END_OF_TEXT";
-Content-Type: text/plain
+Content-Type: application/json
 Status: 500
 
-$err
+$error_payload
 END_OF_TEXT
 
   exit 1;
@@ -147,7 +167,7 @@ sub fetch_config {
 
   my $dist_dir = dist_dir('DocConverter');
 
-  my $file = sprintf '%s/.cfg', $name;
+  my $file = sprintf '%s/%s.cfg', $dist_dir, $name;
 
   open my $fh, '<', $file
     or die "could not open config file [$file]";
@@ -186,7 +206,7 @@ sub get_status {
 
   my $result;
 
-  $LOGGER->( sprintf 'document-id: %s pid: %s bucket: %s', @{$args}{qw/document-id pid bucket/} );
+  $LOGGER->info( sprintf 'document-id: %s pid: %s bucket: %s', @{$args}{qw(document-id pid bucket)} );
 
   my $bucket = $args->{s3}->bucket( $args->{bucket} );
 
@@ -269,93 +289,113 @@ sub convert_document {
   # retrieve document from cloud
   my $infile = get_from_s3( $bucket, $document_id, $file_to_convert );
 
-  my $result;
+  my $result = eval {
 
-  if ( !$infile || -s $infile ) {
-    $result->{error} = $args->{s3}->errstr;
-  }
-
-  $t->{s3_time} = tv_interval( $t1, [gettimeofday] );
-  $t1 = [gettimeofday];
-
-  my ( $name, undef, $ext ) = fileparse( $file_to_convert, qr/[.][^.]*/xsm );
-  $name ||= $ext;  # ex: .emacs
-
-  my ( undef, $path ) = fileparse( $infile, qr/[.][^.]*/xsm );
-  my $outfile = sprintf '%s%s.pdf', $path, $name;
-
-  $LOGGER->info("outfile: $outfile");
-  $LOGGER->info("infile: $infile");
-
-  $result = {
-    'document-id' => $args->{'document-id'},
-    pid           => $PID
-  };
-
-  if ( $args->{pdf} && $infile && -s $infile ) {
-    # create PDF
-    my $cmd = sprintf '%s %s %s', $config->{helpers}->{doc2pdf}, $infile, $outfile;
-
-    $LOGGER->info( 'command: ' . $cmd );
-    $LOGGER->info(`$cmd 2>/dev/null`);
-
-    if ( -s $outfile ) {
-      $result->{pdf_size} = -s "$outfile";
-      $result->{pdf}      = {
-        name  => "$name.pdf",
-        pages => pdfinfo( $outfile, $config ),
-        s3    => sprintf 's3://%s/%s/%s.pdf',
-        @{$args}{qw/bucket document-id/}, $name
-      };
+    if ( !$infile || !-s $infile ) {
+      return { error => $args->{s3}->errstr };
     }
 
-    $t->{libreoffice_time} = tv_interval( $t1, [gettimeofday] );
+    $t->{s3_time} = tv_interval( $t1, [gettimeofday] );
     $t1 = [gettimeofday];
 
-    put_to_s3( $bucket, $document_id, $outfile );
-    $t->{s3_time} += tv_interval( $t1, [gettimeofday] );
-    $t1 = [gettimeofday];
-  }
+    my ( $name, undef, $ext ) = fileparse( $file_to_convert, qr/[.][^.]*/xsm );
+    $name ||= $ext;  # ex: .emacs
 
-  if ( -s $outfile && $args->{thumb} && @{ $args->{thumb} } ) {
-    # create thumbs
-    my @thumbs;
-    foreach ( @{ $args->{thumb} } ) {
-      push @thumbs, create_preview( config => $config, size => $_, infile => $outfile );
-    }
+    my ( undef, $path ) = fileparse( $infile, qr/[.][^.]*/xsm );
+    my $outfile = sprintf '%s%s.pdf', $path, $name;
 
-    $t->{imagemagick_time} = tv_interval( $t1, [gettimeofday] );
-    $t1 = [gettimeofday];
-    $LOGGER->info( Dumper( [ thumbs => \@thumbs ] ) );
+    $LOGGER->info("outfile: $outfile");
+    $LOGGER->info("infile: $infile");
 
-    $result->{thumbs} = [];
+    my $result = {
+      'document-id' => $args->{'document-id'},
+      pid           => $PID
+    };
 
-    foreach (@thumbs) {
-      my ( $name, $path, $ext ) = fileparse( $_, qr/[.][^.]*$/xsm );
+    if ( $args->{pdf} && $infile && -s $infile ) {
+      # create PDF
+      my $cmd = sprintf '%s %s %s', $config->{helpers}->{doc2pdf}, $infile, $outfile;
 
-      push @{ $result->{thumbs} },
-        {
-        name => "$name$ext",
-        size => -s $_,
-        s3   => sprintf 's3://%s/%s/%s%s',
-        @{$args}{qw(bucket document-id)}, $name, $ext
+      my ( $err_name, $path, $ext ) = fileparse( $infile, qr/[.][^.]+$/xsm );
+
+      my ( undef, $err_file ) = tempfile(
+        sprintf( '%s-XXXX', $PID ),
+        TMPDIR => $TRUE,
+        SUFFIX => '.err'
+      );
+
+      $LOGGER->info( 'command: ' . $cmd );
+      $LOGGER->info(`$cmd 2>$err_file`);
+
+      if ( -s $outfile ) {
+        $result->{pdf_size} = -s "$outfile";
+
+        $result->{pdf} = {
+          name  => "$name.pdf",
+          pages => pdfinfo( $outfile, $config ),
+          s3    => sprintf 's3://%s/%s/%s.pdf',
+          @{$args}{qw(bucket document-id)}, $name
         };
+      }
+      elsif ( -s $err_file ) {
+        put_to_s3( $bucket, $args->{'document-id'}, $err_file );
+      }
 
-      put_to_s3( $bucket, $document_id, $_ );
+      $t->{libreoffice_time} = tv_interval( $t1, [gettimeofday] );
+      $t1 = [gettimeofday];
+
+      put_to_s3( $bucket, $document_id, $outfile );
+      $t->{s3_time} += tv_interval( $t1, [gettimeofday] );
+      $t1 = [gettimeofday];
     }
 
-    $t->{s3_time} += tv_interval( $t1, [gettimeofday] );
-    $t1 = [gettimeofday];
-  }
+    if ( -s $outfile && $args->{thumb} && @{ $args->{thumb} } ) {
+      # create thumbs
+      my @thumbs;
+      foreach ( @{ $args->{thumb} } ) {
+        push @thumbs, create_preview( config => $config, size => $_, infile => $outfile );
+      }
 
-  $t->{elapsed_time} = tv_interval( $t0, [gettimeofday] );
+      $t->{imagemagick_time} = tv_interval( $t1, [gettimeofday] );
+      $t1 = [gettimeofday];
+      $LOGGER->info( Dumper( [ thumbs => \@thumbs ] ) );
+
+      $result->{thumbs} = [];
+
+      foreach (@thumbs) {
+        my ( $name, $path, $ext ) = fileparse( $_, qr/[.][^.]*$/xsm );
+
+        push @{ $result->{thumbs} },
+          {
+          name => "$name$ext",
+          size => -s $_,
+          s3   => sprintf 's3://%s/%s/%s%s',
+          @{$args}{qw(bucket document-id)}, $name, $ext
+          };
+
+        put_to_s3( $bucket, $document_id, $_ );
+      }
+
+      $t->{s3_time} += tv_interval( $t1, [gettimeofday] );
+      $t1 = [gettimeofday];
+    }
+
+    $t->{elapsed_time} = tv_interval( $t0, [gettimeofday] );
+
+    return $result;
+  };
 
   # write status file
   my $dir = tempdir( CLEANUP => $TRUE );
 
   my $status_file = sprintf '%s/%s-status.json', $dir, $PID;
 
-  $result->{conversion_time} = $t;
+  if ( !$result || $result->{error} || $EVAL_ERROR ) {
+    $result->{error} //= $EVAL_ERROR;
+  }
+  else {
+    $result->{conversion_time} = $t;
+  }
 
   open my $fh, '>', $status_file
     or croak 'could not open ' . $status_file . ' for writing';
@@ -375,24 +415,27 @@ sub main {
 
   my $config = fetch_config();
 
-  my $args = eval {
+  init_logger( $ENV{LogLevel} // $config->{log_level} // 'info' );
 
-    my $config = fetch_config();
+  $LOGGER->info("--- Starting $PROGRAM_NAME ---");
+  $LOGGER->info( sprintf 'REQUEST_METHOD: %s', $ENV{REQUEST_METHOD} );
+
+  my $args = eval {
 
     return {
       config => $config,
-      s3     => Amazon::S3->new( credentials => Amazon::Credentials->new )
+      s3     => Amazon::S3->new(
+        credentials      => Amazon::Credentials->new( order => [qw(env role)] ),
+        dns_bucket_names => 0,
+        secure           => 0,
+        host             => 'localstack_main:4566',
+      )
     };
   };
 
   if ($EVAL_ERROR) {
     fatal_error($EVAL_ERROR);
   }
-
-  init_logger( $ENV{LogLevel} // $config->{log_level} // 'info' );
-
-  $LOGGER->info("--- Starting $PROGRAM_NAME ---");
-  $LOGGER->info( 'REQUEST_METHOD: %s', $ENV{REQUEST_METHOD} );
 
   my $uri    = $ENV{PATH_INFO};
   my $method = $ENV{REQUEST_METHOD};
@@ -484,7 +527,9 @@ sub main {
       $args->{pid} = $1;
     }
 
-    if ( $args->{bucket} && $args->{'document-id'} ) {
+    my ( $document_id, $pid ) = @{$args}{qw(document-id pid)};
+
+    if ( $args->{bucket} && $document_id ) {
       # try to get process process status. it's either:
       #  a. done
       #  b. still running
@@ -494,19 +539,41 @@ sub main {
       if ($status) {
         send_result( $HTTP_OK, $status );
       }
-      elsif ( kill 0, $args->{pid} ) {
+      elsif ( kill 0, $pid ) {
         send_result( $HTTP_NOT_FOUND, { status => $HTTP_NOT_FOUND, message => 'running' } );
       }
       else {
-        send_result( $HTTP_SERVER_ERROR, { status => $HTTP_SERVER_ERROR, message => 'process not running' } );
+        my $bucket      = $args->{s3}->bucket( $args->{bucket} );
+        my $bucket_keys = list_bucket( $bucket, $args->{'document-id'} );
+
+        my ($err_file) = grep { $_->{key} =~ /\/$pid-[^.]{4}[.]err$/xsm } @{ $bucket_keys->{keys} };
+
+        my $error_message = eval {
+          return q{}
+            if !$err_file;
+
+          my ( undef, $name ) = split /\//xsm, $err_file->{key};
+
+          my $tmpfile = get_from_s3( $bucket, $document_id, $name );
+
+          return slurp($tmpfile);
+        };
+
+        send_result(
+          $HTTP_SERVER_ERROR,
+          { status  => $HTTP_SERVER_ERROR,
+            message => 'process not running',
+            err_msg => $error_message
+          }
+        );
       }
     }
     else {
-      fatal_error("error: no bucket or document-id");
+      fatal_error('error: no bucket or document-id');
     }
   }
   else {
-    fatal_error("error: invalid request");
+    fatal_error('error: invalid request');
   }
 
   return 0;

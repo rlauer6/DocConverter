@@ -1,5 +1,6 @@
 Amazon::S3                0.65
 Amazon::Credentials
+CGI
 Data::UUID                1.219
 Date::Manip::Date         6.41
 File::HomeDir             1.00
