@@ -6,3 +6,7 @@ resources
 *.pdf
 *.log
 *.png
+**/*.pm
+extra-files
+provides
+modified

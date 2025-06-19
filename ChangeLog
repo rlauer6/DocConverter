@@ -1,3 +1,17 @@
+Thu Jun 19 07:12:48 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.0]:
+	* VERSION: new
+	* Makefile
+	- build from .pm.in
+	- update version
+	(lib/DocConverter.pm): -> lib/DocConverter.pm.in
+	(lib/DocConverter/Constants.pm): -> lib/DocConverter/Constants.pm.in
+	(lib/DocConverter/Utils.pm): -> lib/DocConverter/Utils.pm.in
+	* .gitignore: *.pm, modified, provides, extra-files
+	* README.md: generated
+	* provides: removed
+
 Thu Jun 19 06:44:19 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[0.01]:
