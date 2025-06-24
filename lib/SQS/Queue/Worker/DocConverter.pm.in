@@ -1,0 +1,70 @@
+package SQS::Queue::Worker::DocConverter;
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use English qw(no_match_vars);
+use SQS::Queue::Constants qw(:all);
+
+use Role::Tiny::With;
+
+with 'DocConverter::Role::S3';
+with 'DocConverter::Role::Helpers';
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(
+  qw(
+    benchmark
+    bucket
+    bucket_name
+    conversion_time
+    credentials
+    document_id
+  )
+);
+
+use parent qw(SQS::Queue::Worker);
+
+########################################################################
+sub handler {
+########################################################################
+  my ($self) = @_;
+
+  my $s3_client = $self->get_s3_client // $self->init_s3_client;
+
+  $self->parse_message;
+
+  my $params = $self->get_message_params;
+
+  $self->get_logger->info(
+    Dumper(
+      [ params => $params,
+        body   => $self->get_body,
+      ]
+    )
+  );
+
+  my ( $bucket_name, $document_id, $action ) = @{$params}{qw(bucket_name document_id action)};
+
+  my ( $pdf, $thumb ) = @{$params}{qw(pdf thumb)};
+
+  $action //= 'convert';
+  $pdf    //= $TRUE;
+
+  $bucket_name //= $self->get_bucket_name;
+
+  $self->set_bucket_name($bucket_name);
+
+  $self->set_bucket( $self->get_s3_client->bucket($bucket_name) );
+
+  $self->convert_document(
+    document_id => $document_id,
+    pdf         => $pdf,
+    thumb       => $thumb
+  );
+
+  return $TRUE;
+}
+
+1;

@@ -1,4 +1,3 @@
-#!/usr/bin/env perl
 package DocConverter::Constants;
 
 use strict;
@@ -8,32 +7,32 @@ use Log::Log4perl::Level;
 
 use Readonly;
 
-Readonly::Scalar our $TRUE  => 1;
-Readonly::Scalar our $FALSE => 0;
+# helpers
+Readonly::Scalar our $PDFINFO => '/usr/bin/pdfinfo';
+Readonly::Scalar our $CONVERT => '/usr/bin/convert';
+Readonly::Scalar our $DOC2PDF => '/usr/local/bin/doc2pdf';
+Readonly::Scalar our $PDFTOPS => '/usr/bin/pdftops';
 
+# booleans
+
+Readonly::Scalar our $TRUE    => 1;
+Readonly::Scalar our $FALSE   => 0;
+Readonly::Scalar our $FAILURE => 1;
+Readonly::Scalar our $SUCCESS => 0;
+
+# chars
 Readonly::Scalar our $DASH  => q{-};
 Readonly::Scalar our $SLASH => q{/};
 Readonly::Scalar our $SPACE => q{ };
 Readonly::Scalar our $EMPTY => q{};
 
+# http
 Readonly::Scalar our $HTTP_NOT_FOUND    => '404';
 Readonly::Scalar our $HTTP_OK           => '200';
 Readonly::Scalar our $HTTP_SERVER_ERROR => '500';
 Readonly::Scalar our $HTTP_BAD_REQUEST  => '400';
 
-Readonly::Scalar our $DEFAULT_TIMEOUT        => 60;
-Readonly::Scalar our $DEFAULT_SLEEP_INTERVAL => 1;
-Readonly::Scalar our $BUFFER_SIZE            => 4096;
-
-Readonly::Hash our %LOG_LEVELS => (
-  trace => $TRACE,
-  debug => $DEBUG,
-  warn  => $WARN,
-  info  => $INFO,
-  error => $ERROR,
-);
-
-our %MIME_TYPES = (
+Readonly::Hash our %MIME_TYPES => (
   'application/pdf'                                                          => '.pdf',
   'image/jpeg'                                                               => '.jpg',
   'image/png'                                                                => '.png',
@@ -41,6 +40,22 @@ our %MIME_TYPES = (
   'application/msword'                                                       => '.doc',
   'application/vnd.openxmlformats-officeodocument.wordprocessingml.document' => '.docx',
   'application/vnd.openxmlformats-officeodocument.spreadhseetml.sheet'       => '.xlsx',
+);
+
+# defaults
+Readonly::Scalar our $DEFAULT_TIMEOUT        => 60;
+Readonly::Scalar our $DEFAULT_SLEEP_INTERVAL => 1;
+Readonly::Scalar our $BUFFER_SIZE            => 4096;
+Readonly::Scalar our $DEFAULT_BASE_URL       => '/converter';
+Readonly::Scalar our $DEFAULT_HOST           => 'http://localhost:4566';
+
+# log4perl
+Readonly::Hash our %LOG_LEVELS => (
+  trace => $TRACE,
+  debug => $DEBUG,
+  warn  => $WARN,
+  info  => $INFO,
+  error => $ERROR,
 );
 
 use parent qw(Exporter);
@@ -59,7 +74,13 @@ our @EXPORT = qw(
   $DEFAULT_TIMEOUT
   $DEFAULT_SLEEP_INTERVAL
   $BUFFER_SIZE
+  $DEFAULT_HOST
+  $DEFAULT_BASE_URL
   %LOG_LEVELS
+  $PDFINFO
+  $CONVERT
+  $PDFTOPS
+  $DOC2PDF
 );
 
 1;

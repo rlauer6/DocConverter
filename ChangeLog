@@ -1,3 +1,42 @@
+Tue Jun 24 05:57:41 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.1]:
+	* VERSON: bump
+	* doc-converter-handler.yml: new
+	* lib/DocConverter/Client.pm.in: new
+	* lib/DocConverter/Role/Helpers.pm.in: new
+	* lib/DocConverter/Role/S3.pm.in: new
+	* lib/DocConverter/Role/SQS.pm.in: new
+	* lib/SQS/Queue/Worker/Converter.pm.in: new
+	* lib/SQS/Queue/Worker/DocConverter.pm.in: new
+	* t/00-helpers: new
+	* Dockerfile
+	- don't build mod_perl or apreq2, use deb packages
+	- add libapache-mod-perl2, libapache2-mod-perl2-dev, lib-apache2-mod-apreq2
+	* Makefile
+	- add new files to build
+	- perl -wc in build rule
+	- setup dependencies to ensure build order
+	* VERSION
+	* bin/doc2pdf-client.pl
+	- add version
+	- update help
+	* buildspec.yml
+	- + test.pdf, doc-converter-handler.yaml
+	* doc-converter.conf
+	- add environment variables
+	- LocationMatch section for upload/status/download endpoints
+	- add mod_perl handler
+	* lib/DocConverter/Constants.pm.in
+	- + helpers, %MIME_TYPES
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	- remove shebang
+	* lib/SQS/Queue/Workder/Converter.pm.in: removed
+	* requires
+	- + API::SQS::API, Amazon::Credentials, Apache2::Cookie,
+	- + Carp::Always, Data::UUID, Class::Accessor::Fast
+	- + Role::Tiny, Role::Tiny::With, SQS::Queue::Workder, YAML::Tiny
+
 Thu Jun 19 07:12:48 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.0]:

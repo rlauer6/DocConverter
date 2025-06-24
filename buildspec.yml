@@ -15,8 +15,10 @@ path:
 postamble: postamble
 extra-files:
   - postamble
+  - test.pdf
   - share:
     - doc-converter.cfg
+    - doc-converter-handler.yml
     - doc-converter.conf
     - README.md
     - ChangeLog

@@ -1,0 +1,83 @@
+package DocConverter::Client;
+
+use strict;
+use warnings;
+
+use Carp;
+use Data::Dumper;
+use DocConverter::Constants;
+use English qw(no_match_vars);
+use Data::UUID;
+
+use Role::Tiny::With;
+
+with 'DocConverter::Role::S3';
+with 'DocConverter::Role::SQS';
+
+use parent qw(Class::Accessor::Fast);
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(qw(bucket_name endpoint_url file host base_url logger document_id));
+
+########################################################################
+sub create_document_id {
+########################################################################
+  my ($self) = @_;
+
+  my $ug = Data::UUID->new;
+
+  my $uuid = $ug->create();
+
+  $self->set_document_id( $ug->to_string($uuid) );
+
+  return $self->get_document_id;
+}
+
+########################################################################
+sub upload_file {
+########################################################################
+  my ( $self, $file, $action ) = @_;
+
+  my $document_id = $self->create_document_id;
+
+  my $rsp = $self->put_object( $document_id, $file );
+
+  croak sprintf "could not upload %s/%s: %s\n", $document_id, $file, $self->get_s3_client->errstr
+    if !$rsp;
+
+  my $message = {
+    document_id => $document_id,
+    bucket_name => $self->get_bucket_name,
+    $action ? ( action => $action ) : ()
+  };
+
+  $self->send_message($message);
+
+  return $document_id;
+}
+
+########################################################################
+sub new {
+########################################################################
+  my ( $class, @args ) = @_;
+
+  my $options = ref $args[0] ? $args[0] : {@args};
+
+  $options->{host}     //= $DEFAULT_HOST;
+  $options->{base_url} //= $DEFAULT_BASE_URL;
+
+  # check required arguments
+  foreach (qw(bucket_name queue_url)) {
+    next if exists $options->{$_};
+    croak "$_ is a required argument\n";
+  }
+
+  my $self = $class->SUPER::new($options);
+
+  $self->init_s3_client();
+  $self->init_sqs_client();
+
+  return $self;
+}
+
+1;

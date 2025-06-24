@@ -1,0 +1,19 @@
+queue_url: http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/fumanqueue
+visibility_timeout: 20
+max_children: 3
+poll_interval: 1
+bucket_name: test-bucket
+worker: DocConverter
+log_level: debug
+endpoint_url: http://localhost:4566
+log4perl_conf:
+  - log4perl.rootLogger = INFO, SCREEN
+  - log4perl.appender.SCREEN = Log::Log4perl::Appender::Screen
+  - log4perl.appender.SCREEN.stderr = 1
+  - log4perl.appender.SCREEN.layout = PatternLayout
+  - log4perl.appender.SCREEN.layout.ConversionPattern = [%d] %p %m%n
+  - log4perl.appender.LOGFILE = Log::Log4perl::Appender::File
+  - log4perl.appender.LOGFILE.filename = /tmp/sqs-fumanqueue.log
+  - log4perl.appender.LOGFILE.mode = append
+  - log4perl.appender.LOGFILE.layout = PatternLayout
+  - log4perl.appender.LOGFILE.layout.ConversionPattern = [%d] %p %m%n

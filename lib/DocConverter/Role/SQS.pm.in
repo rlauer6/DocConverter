@@ -1,0 +1,62 @@
+package DocConverter::Role::SQS;
+
+use strict;
+use warnings;
+
+use Role::Tiny;
+
+use Amazon::Credentials;
+use Data::Dumper;
+use DocConverter::Constants;
+use English qw(no_match_vars);
+use Amazon::API::SQS;
+use SQS::Queue::Worker qw(create_sqs_message);
+
+use parent qw(Class::Accessor::Fast);
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(qw(sqs_client queue_url credentials));
+
+########################################################################
+sub send_message {
+########################################################################
+  my ( $self, $message ) = @_;
+
+  if ( ref $message ) {
+    $message = create_sqs_message( %{$message} );
+  }
+
+  my $rsp = $self->get_sqs_client->SendMessage(
+    { QueueUrl    => $self->get_queue_url,
+      MessageBody => $message,
+    }
+  );
+
+  return $rsp;
+}
+
+########################################################################
+sub init_sqs_client {
+########################################################################
+  my ($self) = @_;
+
+  $self->set_credentials(
+    Amazon::Credentials->new(
+      no_passkey_warning => 1,
+      order              => [qw(env role)]
+    )
+  );
+
+  my $sqs_client = Amazon::API::SQS->new(
+    logger      => $self->get_logger,
+    log_level   => $ENV{AWS_API_LOGLEVEL} // 'info',
+    url         => $self->get_endpoint_url,
+    credentials => $self->get_credentials,
+  );
+
+  $self->set_sqs_client($sqs_client);
+
+  return $self;
+}
+
+1;

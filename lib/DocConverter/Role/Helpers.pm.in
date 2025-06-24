@@ -1,0 +1,362 @@
+#!/usr/bin/env perl
+package DocConverter::Role::Helpers;
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use English qw(no_match_vars);
+use Carp;
+use DocConverter::Constants;
+use File::Basename qw(basename fileparse);
+use File::Temp qw(tempfile tempdir);
+use JSON;
+use IPC::Run qw(run);
+use Time::HiRes qw(gettimeofday tv_interval);
+
+use Role::Tiny;
+
+use parent qw(Class::Accessor::Fast);
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(qw(last_command error error_code last_result));
+
+########################################################################
+sub pdfinfo {
+########################################################################
+  my ( $self, $file ) = @_;
+
+  my @cmd = ( $PDFINFO, $file );
+
+  $self->get_logger->debug( Dumper( [ command => \@cmd ] ) );
+
+  my $out = $self->execute(@cmd);
+
+  if ( $out =~ /Pages:\s+(\d+)/xsm ) {
+    return $1;
+  }
+
+  return;
+}
+
+########################################################################
+sub execute {
+########################################################################
+  my ( $self, @cmd ) = @_;
+
+  $self->get_logger->debug( Dumper( [ @cmd => \@cmd ] ) );
+
+  my $out = $EMPTY;
+  my $err = $EMPTY;
+
+  $self->set_last_command( \@cmd );
+
+  my $error_code = run( \@cmd, '>', \$out, '2>', \$err );
+
+  if ($err) {
+    $self->get_logger->error($err);
+  }
+
+  $self->set_error($err);
+
+  $self->set_error_code($error_code);
+
+  $self->set_last_result($out);
+
+  return $out;
+}
+
+########################################################################
+sub cvt2png {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my ( $infile, $outfile, $page, $size ) = @args{qw(infile outfile page size)};
+
+  my @cmd = ( sprintf '%s%s', $CONVERT, defined $page ? "[$page]" : $EMPTY );
+
+  push @cmd, '-auto-orient', '-flatten',
+    '-thumbnail'  => $size . '>',
+    '-gravity'    => 'center',
+    '-crop'       => $size . '+0+0!',
+    '-background' => 'transparent',
+    $outfile;
+
+  return $self->execute(@cmd);
+}
+
+########################################################################
+sub create_preview {
+########################################################################
+  my ( $self, %options ) = @_;
+
+  my ( $w, $h ) = split /x/xsm, $options{size};
+
+  my ( $name, $path, $ext ) = fileparse( $options{infile}, qr/[.][^.]*/xsm );
+  $name ||= $ext;
+
+  $options{outfile} = sprintf '%s%s-%s.png', $path, $name, $w;
+
+  $self->cvt2png(%options);
+
+  if ( !-s $options{outfile} ) {
+    my ( undef, $tempfile ) = tempfile;
+
+    my @cmd = (
+      $PDFTOPS,
+      '-f' => 1,
+      '-l' => 1,
+      $options{infile},
+      $tempfile
+    );
+
+    $self->execute(@cmd);
+
+    if ( -s $tempfile ) {
+      $options{infile} = $tempfile;
+      $self->cvt2png(%options);
+    }
+
+    if ( $tempfile && -s $tempfile ) {
+      unlink $tempfile;
+    }
+  }
+
+  return ( -s $options{outfile} ) ? $options{outfile} : ();
+}
+
+########################################################################
+sub benchmark {
+########################################################################
+  my ( $self, $name ) = @_;
+
+  if ( !$name ) {
+    my $t0 = [gettimeofday];
+
+    $self->set_benchmark(
+      { t0 => $t0,
+        t1 => $t0,
+        t  => {},
+      }
+    );
+    return;
+  }
+
+  my $benchmark = $self->get_benchmark;
+
+  my ( $t, $t0, $t1 ) = @{$benchmark}{qw(t t0 t1)};
+
+  $t->{elapsed_time} = tv_interval( $t0, [gettimeofday] );
+
+  $t->{$name} += tv_interval( $t1, [gettimeofday] );
+
+  $benchmark->{t1} = [gettimeofday];
+
+  return;
+}
+
+########################################################################
+sub create_outfile {
+########################################################################
+  my ( $file, $infile ) = @_;
+
+  my ( $name, undef, $ext ) = fileparse( $file, qr/[.][^.]*/xsm );
+  $name ||= $ext;  # ex: .emacs
+
+  my ( undef, $path ) = fileparse( $infile, qr/[.][^.]*/xsm );
+
+  return ( $name, sprintf '%s%s.pdf', $path, $name );
+}
+
+########################################################################
+sub doc2pdf {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my ( $document_id, $outfile, $infile ) = @args{qw(document_id outfile infile)};
+
+  my ( $err_name, $path, $ext ) = fileparse( $infile, qr/[.][^.]+$/xsm );
+
+  my ($name) = fileparse( $infile, qr/[.][^.]+$/xsm );
+
+  my ( $fh, $err_file ) = tempfile(
+    sprintf( '%s-XXXX', $PID ),
+    TMPDIR => $TRUE,
+    SUFFIX => '.err'
+  );
+
+  # create PDF
+  $self->execute( $DOC2PDF, $infile, $outfile );
+
+  print {$fh} $self->get_error;
+
+  close $fh;
+
+  return { err_file => $err_file }
+    if !-s $outfile;
+
+  return {
+    size  => ( -s "$outfile" ),
+    name  => "$name.pdf",
+    pages => $self->pdfinfo($outfile),
+    s3    => sprintf( 's3://%s/%s/%s.pdf', $self->get_bucket_name, $document_id, $name ),
+  };
+}
+
+########################################################################
+sub find_file_in_folder {
+########################################################################
+  my ( $self, $document_id ) = @_;
+
+  my $list = $self->get_bucket->list( { prefix => $document_id } );
+
+  croak sprintf "unable to list bucket for %s: %s\n", $document_id, $self->get_s3_client->errstr
+    if !$list || !@{ $list->{keys} };
+
+  croak sprintf "more than one document in folder %s, don't know what to convert!\n", $document_id
+    if @{ $list->{keys} } != 1;
+
+  return basename( $list->{keys}->[0]->{key} );
+}
+
+########################################################################
+sub convert_document {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my ( $document_id, $file, $pdf, $thumb ) = @args{qw(document_id file pdf thumb)};
+
+  $self->benchmark;
+
+  my $infile = eval {
+    $file //= $self->find_file_in_folder($document_id);
+    return $self->get_object( $document_id, $file );
+  };
+
+  $self->benchmark('s3_time');
+
+  if ( !$infile || !-s $infile || $EVAL_ERROR ) {
+    $self->get_logger->error($EVAL_ERROR);
+
+    $self->write_status_file(
+      $document_id,
+      { document_id => $document_id,
+        error       => $self->get_s3_client->errstr
+      }
+    );
+
+    return;
+  }
+
+  my %result = ( 'document-id' => $document_id );
+
+  my ( $name, $outfile ) = create_outfile( $file, $infile );
+
+  $self->get_logger->info( Dumper( [ outfile => $outfile, infile => $outfile ] ) );
+
+  if ($pdf) {
+    my $metadata = $self->doc2pdf(
+      document_id => $document_id,
+      infile      => $infile,
+      outfile     => $outfile
+    );
+
+    $self->benchmark('libreoffice_time');
+    if ( exists $metadata->{err_file} ) {
+      $self->put_object( $document_id, $metadata->{err_file} );
+    }
+    else {
+      $result{pdf} = $metadata;
+      $self->put_object( $document_id, $outfile );
+      $self->benchmark('s3_time');
+    }
+  }
+
+  if ($thumb) {
+    my $meta_data = $self->create_thumb_nails(
+      thumb       => $thumb,
+      infile      => $outfile,
+      document_id => $document_id
+    );
+
+    $result{thumbs} = $meta_data;
+  }
+
+  $self->write_status_file( $document_id, \%result );
+
+  return;
+}
+
+########################################################################
+sub write_status_file {
+########################################################################
+  my ( $self, $document_id, $result ) = @_;
+
+  # write status file
+  my $dir = tempdir( CLEANUP => $TRUE );
+
+  my $status_file = sprintf '%s/status.json', $dir, $document_id;
+
+  if ( !$result || $result->{error} || $EVAL_ERROR ) {
+    $result->{error} //= $EVAL_ERROR;
+  }
+  else {
+    $result->{conversion_time} = $self->get_conversion_time;
+  }
+
+  open my $fh, '>', $status_file
+    or croak 'could not open ' . $status_file . ' for writing';
+
+  print {$fh} to_json( $result, { pretty => $TRUE } );
+
+  close $fh;
+
+  $self->put_object( $document_id, $status_file );
+
+  return;
+}
+
+########################################################################
+sub create_thumb_nails {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my ( $thumb, $infile, $document_id ) = @args{qw(thumb infile document_id)};
+
+  my @thumb_list = @{ $thumb || [] };
+
+  return
+    if !-s $infile || !@thumb_list;
+
+  # create thumbs
+  my @thumbs;
+
+  foreach my $thumb_size (@thumb_list) {
+    push @thumbs, $self->create_preview( size => $thumb_size, infile => $infile );
+  }
+
+  $self->benchmark('imagemagick_time');
+
+  $self->get_logger->info( Dumper( [ thumbs => \@thumbs ] ) );
+
+  my @thumbnail_metadata;
+
+  foreach my $thumbnail_file (@thumbs) {
+    my ( $name, $path, $ext ) = fileparse( $thumbnail_file, qr/[.][^.]*$/xsm );
+
+    push @thumbnail_metadata,
+      {
+      name => "$name$ext",
+      size => ( -s $thumbnail_file ),
+      s3   => sprintf( 's3://%s/%s/%s%s', $self->get_bucket_name, $document_id, $name, $ext ),
+      };
+
+    $self->put_object( $document_id, $thumbnail_file );
+  }
+
+  $self->benchmark('s3_time');
+
+  return \@thumbnail_metadata;
+}
+
+1;

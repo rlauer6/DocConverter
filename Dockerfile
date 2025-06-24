@@ -6,30 +6,20 @@ RUN apt-get update --fix-missing && apt-get install -y --fix-missing \
     less vim curl git automake less gcc gnupg libzip-dev \
     apache2 apache2-dev libpcre3 libapr1-dev libaprutil1-dev \
     libssl-dev libperl-dev perl-doc \
-    libpng-dev libexpat-dev imagemagick libreoffice poppler-utils ghostscript
+    libpng-dev libexpat-dev imagemagick libreoffice poppler-utils ghostscript \
+    libapache2-mod-perl2 libapache2-mod-perl2-dev libapache2-mod-apreq2
 
 RUN curl -L https://cpanmin.us | perl - App::cpanminus
 RUN cpanm -n ExtUtils::XSBuilder::ParseSource
-
-RUN curl -LO https://archive.apache.org/dist/perl/mod_perl-2.0.13.tar.gz && \
-   tar xvzf mod_perl-2.0.13.tar.gz && \
-   cd mod_perl-2.0.13 && \
-   perl Makefile.PL && \
-   make && make install
-
-RUN curl -LO https://archive.apache.org/dist/httpd/libapreq/libapreq2-2.17.tar.gz && \
-    tar xfvz libapreq2-2.17.tar.gz && \
-    cd libapreq2-2.17 && \
-    perl Makefile.PL --disabe-static && \
-    make && make install
-
-RUN rm -rf mod_perl-2.0.13* RUN rm -rf libapreq2-2.17*
 
 # install deps
 COPY requires /
 RUN for a in $(cat requires|awk '{print $1}');do \
       cpanm -n -v $a; \
     done
+
+COPY SQS-Queue-Worker-*.tar.gz .
+RUN cpanm -n -v SQS-Queue-Worker-*.tar.gz
 
 COPY DocConverter-*.tar.gz .
 RUN cpanm -n -v DocConverter-*.tar.gz
@@ -50,5 +40,5 @@ RUN DIST_DIR=$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocCon
     a2enconf doc-converter
 
 RUN cp /usr/local/bin/doc-converter.pl /usr/lib/cgi-bin/doc-converter.cgi
-
+RUN sed -ibak 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
 CMD ["/usr/sbin/apache2ctl", "-D", "FOREGROUND" ]

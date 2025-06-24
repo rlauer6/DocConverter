@@ -1,0 +1,106 @@
+package DocConverter::Role::S3;
+
+use strict;
+use warnings;
+
+use Amazon::S3;
+use Amazon::Credentials;
+use Data::Dumper;
+use English qw(no_match_vars);
+use File::Basename qw(fileparse);
+use File::Temp qw(tempdir tempfile);
+use DocConverter::Constants;
+
+use Role::Tiny;
+
+use parent qw(Class::Accessor::Fast);
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(qw(s3_client bucket));
+
+########################################################################
+sub init_s3_client {
+########################################################################
+  my ($self) = @_;
+
+  my $endpoint_url = $self->get_endpoint_url;
+
+  my $credentials = $self->get_credentials;
+  $credentials //= Amazon::Credentials->new(
+    no_passkey_warning => 1,
+    order              => [qw(env role)]
+  );
+
+  my %options = ( credentials => $credentials );
+
+  if ($endpoint_url) {
+    $endpoint_url =~ s/https?:\/\///xsm;
+
+    %options = (
+      %options,
+      host             => $endpoint_url,
+      secure           => $FALSE,
+      dns_bucket_names => $FALSE,
+    );
+  }
+
+  my $s3_client = Amazon::S3->new(%options);
+  $self->set_s3_client($s3_client);
+
+  $self->set_bucket( $s3_client->bucket( $self->get_bucket_name ) );
+
+  return $s3_client;
+}
+
+########################################################################
+sub put_object {
+########################################################################
+  my ( $self, $prefix, $file ) = @_;
+
+  my $bucket = $self->get_bucket;
+
+  my ( $key, undef, $ext ) = fileparse( $file, qr/[.][^.]*$/xsm );
+
+  my $object_name = sprintf '%s/%s%s', $prefix, $key, $ext;
+
+  my $rsp = $bucket->add_key_filename( $object_name, $file );
+
+  return $rsp ? $file : undef;
+}
+
+########################################################################
+sub get_object {
+########################################################################
+  my ( $self, $prefix, $file ) = @_;
+
+  my $bucket = $self->get_bucket;
+
+  my $dir = tempdir( CLEANUP => $TRUE );
+
+  my $outfile = sprintf '%s/%s', $dir, $file;
+  print {*STDERR} Dumper(
+    [ dir     => $dir,
+      file    => $file,
+      outfile => $outfile
+    ]
+  );
+
+  my $rsp = $bucket->get_key_filename( "$prefix/$file", undef, $outfile );
+  print {*STDERR} Dumper( [ rsp => $rsp, outfile => $outfile ] );
+
+  print {*STDERR} Dumper( [ size => -s $outfile ] );
+
+  return -s $outfile ? $outfile : $EMPTY;
+}
+
+########################################################################
+sub list_bucket {
+########################################################################
+  my ( $self, $prefix ) = @_;
+
+  my $bucket = $self->get_bucket;
+
+  return $bucket->list( { prefix => $prefix } );
+}
+
+1;

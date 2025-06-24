@@ -39,6 +39,8 @@ use LWP::UserAgent;
 use Log::Log4perl qw(:easy);
 use Log::Log4perl::Level;
 
+our $VERSION = '@PACKAGE_VERSION@';
+
 ########################################################################
 sub usage {
 ########################################################################
@@ -61,7 +63,6 @@ remote document converter service.
  -p, --pdf                      create a pdf (default), use --nopdf if you don't want one
  -P, --page                     use page N as the page for thumbs, defaults to page 1
  -s, --sleep                    time in seconds to sleep between status checks (default: 1s)
- -S, --aws-secret-key           AWS secret key
      --secure                   whether to use http or https when connecting to S3 endpoint, default: true
  -t, --timeout                  timeout in seconds
  -T, --thumb                    on or more strings (hxw,hxw,...) representing thumbnail sizes,
