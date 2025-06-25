@@ -57,7 +57,17 @@ $(GHANDLER): $(GROLES) $(GPERL_MODULES)
 
 $(GPERL_MODULES): $(GCONSTANTS) $(PERL_MODULES)
 
-$(TARBALL): buildspec.yml $(GPERL_MODULES) $(GHANDLER) $(GCLIENT) $(GMOD_PERL_HANDLER) requires test-requires README.md
+TARBALL_DEPS = \
+    $(GPERL_MODULES) \
+    $(GHANDLER) \
+    $(GCLIENT) \
+    $(GMOD_PERL_HANDLER) \
+    start-server \
+    requires \
+    test-requires \
+    README.md
+
+$(TARBALL): buildspec.yml $(TARBALL_DEPS)
 	make-cpan-dist.pl -b $<
 
 README.md: lib/$(MODULE_PATH)
@@ -68,24 +78,50 @@ clean:
 	rm -f *.tar.gz
 	rm -f provides extra-files resources
 
-.PHONY: version
+IMAGE_NAME     := doc-converter
+IMAGE_ID_FILE  := $(IMAGE_NAME).dockerid
+
+.PHONY: image docker-clean
+
+image: $(IMAGE_ID_FILE)
+
+$(IMAGE_ID_FILE): Dockerfile $(TARBALL)
+	@if [ -e "$(IMAGE_ID_FILE)" ]; then \
+	  oldid=$$(cut -d: -f2 "$(IMAGE_ID_FILE)"); \
+	else \
+	  oldid=""; \
+	fi; \
+	docker build -f $< -t $(IMAGE_NAME) .; \
+	docker image inspect $(IMAGE_NAME) | jq -r '.[0].Id' > "$@"; \
+	newid=$$(cut -d: -f2 "$@"); \
+	if [ -n "$$oldid" ] && [ "$$oldid" != "$$newid" ]; then \
+	  docker rmi "$$oldid" || true; \
+	fi
+
+docker-clean:
+	rm -f $(IMAGE_ID_FILE)
+
+.PHONY: version release minor major
+
 version:
-	if [[ "$$bump" = "release" ]]; then \
+	@if [[ "$$bump" = "release" ]]; then \
 	  bump=2; \
 	elif [[ "$$bump" = "minor" ]]; then \
 	  bump=1; \
 	elif [[ "$$bump" = "major" ]]; then \
 	  bump=0; \
 	fi; \
-	v=$$(echo $${bump}.$$(cat VERSION) | \
+	ver=$$(cat VERSION); \
+	v=$$(echo $${bump}.$$ver | \
 	  perl -a -F[.] -pe '$$i=shift @F;$$F[$$i]++;$$j=$$i+1;$$F[$$_]=0 for $$j..2;$$"=".";$$_="@F"'); \
 	echo $$v >VERSION;
+	@cat VERSION
 
 release:
-	$(MAKE) version bump=release
+	@$(MAKE) -s version bump=release
 
 minor:
-	$(MAKE) version bump=minor
+	@$(MAKE) -s version bump=minor
 
 major:
-	$(MAKE) version bump=major
+	@$(MAKE) -s version bump=major

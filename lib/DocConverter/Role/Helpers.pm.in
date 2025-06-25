@@ -295,13 +295,13 @@ sub write_status_file {
   # write status file
   my $dir = tempdir( CLEANUP => $TRUE );
 
-  my $status_file = sprintf '%s/status.json', $dir, $document_id;
+  my $status_file = sprintf '%s/status.json', $dir;
 
   if ( !$result || $result->{error} || $EVAL_ERROR ) {
     $result->{error} //= $EVAL_ERROR;
   }
   else {
-    $result->{conversion_time} = $self->get_conversion_time;
+    $result->{conversion_time} = $self->get_benchmark;
   }
 
   open my $fh, '>', $status_file

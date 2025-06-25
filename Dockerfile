@@ -12,14 +12,13 @@ RUN apt-get update --fix-missing && apt-get install -y --fix-missing \
 RUN curl -L https://cpanmin.us | perl - App::cpanminus
 RUN cpanm -n ExtUtils::XSBuilder::ParseSource
 
+ENV PERL_CPANM_OPT="-n -v --no-man-pages --mirror-only --mirror https://cpan.openbedrock.net/orepan2 --mirror https://cpan.metacpan.org"
+
 # install deps
 COPY requires /
 RUN for a in $(cat requires|awk '{print $1}');do \
       cpanm -n -v $a; \
     done
-
-COPY SQS-Queue-Worker-*.tar.gz .
-RUN cpanm -n -v SQS-Queue-Worker-*.tar.gz
 
 COPY DocConverter-*.tar.gz .
 RUN cpanm -n -v DocConverter-*.tar.gz
@@ -41,4 +40,11 @@ RUN DIST_DIR=$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocCon
 
 RUN cp /usr/local/bin/doc-converter.pl /usr/lib/cgi-bin/doc-converter.cgi
 RUN sed -ibak 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
-CMD ["/usr/sbin/apache2ctl", "-D", "FOREGROUND" ]
+
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+RUN unzip awscliv2.zip
+RUN ./aws/install
+
+COPY start-server /usr/local/bin/start-server
+RUN chmod +x /usr/local/bin/start-server
+CMD ["/usr/local/bin/start-server"]

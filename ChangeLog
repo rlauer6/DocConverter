@@ -1,3 +1,30 @@
+Wed Jun 25 10:30:57 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.2]:
+	* VERSION: bump
+	* start-server: new
+	* Dockerfile
+	- use cpan.openbedrock.net
+	- install aws cli
+	- install start-server script
+	* Makefile
+	- refactor TARBALL target
+	- refactor versin target
+	(image): new target
+	* doc-converter-handler.yml
+	- update test queue url, bucket name, endpoint url
+	- update log file
+	* doc-converter.conf
+	- use PerlPassEnv, not SetEnv
+	- disable CGI unless ENABLE_CGI defined
+	* docker-compose.yml
+	- add healthcheck to ensure LocalStack is up before web service starts
+	* lib/DocConverter/Role/Helpers.pm.in
+	(write_status): set conversion_time to the benchmark content
+	* requires: + Amazon::API
+	* start-server: check to see that queue daemon is actually up
+	* lib/DocConverter/Handler.pm.in: new
+
 Tue Jun 24 05:57:41 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.1]:

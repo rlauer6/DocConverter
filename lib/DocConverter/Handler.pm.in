@@ -1,0 +1,90 @@
+package DocConverter::Handler;
+
+use strict;
+use warnings;
+
+use APR::Table;
+use Apache2::Const -compile => qw(OK);
+use Apache2::Cookie;
+use Apache2::Log();
+use Apache2::Request;
+use Apache2::RequestIO();
+use Apache2::RequestRec();
+use Apache2::Upload;
+
+use DocConverter::Client;
+use DocConverter::Constants;
+
+use Data::Dumper;
+use English qw(no_match_vars);
+use File::ShareDir qw(dist_dir);
+use JSON;
+use SQS::Queue::Worker qw(fetch_config);
+
+our $DOC_CONVERTER;
+
+BEGIN {
+  my $dist_dir = dist_dir('DocConverter');
+
+  my $config = fetch_config("$dist_dir/doc-converter-handler.yml");
+
+  $DOC_CONVERTER = eval {
+    DocConverter::Client->new(
+      endpoint_url => $config->{endpoint_url} // $ENV{AWS_ENDPOINT_URL},
+      bucket_name  => $config->{bucket_name}  // $ENV{AWS_BUCKET_NAME},
+      queue_url    => $config->{queue_url}    // $ENV{AWS_QUEUE_URL},
+    );
+  };
+}
+
+our $DOC_CONVERTER_STATUS = $EVAL_ERROR // 'OK';
+
+print {*STDERR} "Status: $DOC_CONVERTER_STATUS\n";
+
+########################################################################
+sub handler {
+########################################################################
+  my ($r) = @_;
+
+  if ( !$DOC_CONVERTER ) {
+    $r->content_type('text/plain');
+
+    $r->print( sprintf '<pre>%s</pre>', $DOC_CONVERTER_STATUS );
+
+    return Apache2::Const::OK;
+  }
+
+  if ( $r->method eq 'GET' ) {
+    $r->content_type('text/html');
+
+    $r->print('Hello World!');
+  }
+
+  if ( $r->method eq 'POST' ) {
+    my $req    = Apache2::Request->new($r);
+    my $upload = $req->upload('upload');
+
+    my $filename = '/tmp/' . $upload->filename;
+    $upload->link($filename);
+
+    $r->content_type('application/json');
+    my $document_id;
+
+    if ($DOC_CONVERTER) {
+      $document_id = $DOC_CONVERTER->upload_file($filename);
+    }
+
+    $r->print(
+      to_json(
+        { document_id => $document_id,
+          tempname    => $upload->tempname,
+          filename    => $upload->filename,
+        }
+      )
+    );
+  }
+
+  return Apache2::Const::OK;
+}
+
+1;

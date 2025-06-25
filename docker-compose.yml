@@ -8,6 +8,7 @@ services:
     networks:
       default:
         aliases:
+          - localstack_main
           - s3.localhost.localstack.cloud
     ports:
       - "127.0.0.1:4510-4530:4510-4530"
@@ -16,26 +17,35 @@ services:
     environment:
       - SERVICES=s3,sqs
       - DEBUG=${DEBUG-}
-      - DATA_DIR=${DATA_DIR-}
-      - LAMBDA_EXECUTOR=${LAMBDA_EXECUTOR-}
-      - HOST_TMP_FOLDER=${TMPDIR:-/tmp/}localstack
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
   web:
     read_only: false
     build:
       context: ${PWD}
       dockerfile: ${PWD}/${DOCKERFILE}
     image: doc-converter
+    depends_on:
+      localstack:
+        condition: service_healthy
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_BUCKET_NAME=doc-converter
+      - AWS_QUEUE_NAME=doc-converter
+    volumes:
+      - "./upload.html:/var/www/html/upload.html"
     tty: true
     stdin_open: true
     ports:
       - '80:80'
     expose:
       - 80
-
