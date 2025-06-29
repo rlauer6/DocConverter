@@ -21,8 +21,10 @@ use strict;
 use warnings;
 
 use Amazon::S3;
+use Carp;
 use Data::Dumper;
 use DocConverter::Constants;
+use English qw(-no_match_vars);
 use File::Basename;
 use File::HomeDir;
 use File::Temp qw(tempfile tempdir);
@@ -41,10 +43,28 @@ our @EXPORT = qw(
   init_logger
   list_bucket
   put_to_s3
+  slurp
 );
 
 our $LOGGER;
 our $LOG_LEVEL;
+
+########################################################################
+sub slurp {
+########################################################################
+  my ( $file, $from_json ) = @_;
+
+  local $RS = undef;
+
+  open my $fh, '<', $file
+    or croak "could not open $file for reading\n";
+
+  my $content = <$fh>;
+
+  close $fh;
+
+  return $from_json ? from_json($content) : $content;
+}
 
 ########################################################################
 sub init_logger {

@@ -7,7 +7,7 @@ use Amazon::S3;
 use Amazon::Credentials;
 use Data::Dumper;
 use English qw(no_match_vars);
-use File::Basename qw(fileparse);
+use File::Basename qw(fileparse basename);
 use File::Temp qw(tempdir tempfile);
 use DocConverter::Constants;
 
@@ -55,9 +55,12 @@ sub init_s3_client {
 ########################################################################
 sub put_object {
 ########################################################################
-  my ( $self, $prefix, $file ) = @_;
+  my ( $self, $prefix, $file, $content ) = @_;
 
   my $bucket = $self->get_bucket;
+
+  return $bucket->add_key( "$prefix/$file", $content )
+    if $content;
 
   my ( $key, undef, $ext ) = fileparse( $file, qr/[.][^.]*$/xsm );
 
@@ -66,6 +69,7 @@ sub put_object {
   my $rsp = $bucket->add_key_filename( $object_name, $file );
 
   return $rsp ? $file : undef;
+
 }
 
 ########################################################################
@@ -75,20 +79,31 @@ sub get_object {
 
   my $bucket = $self->get_bucket;
 
+  $file = basename($file);
+
   my $dir = tempdir( CLEANUP => $TRUE );
 
   my $outfile = sprintf '%s/%s', $dir, $file;
-  print {*STDERR} Dumper(
-    [ dir     => $dir,
-      file    => $file,
-      outfile => $outfile
-    ]
+
+  $self->get_logger->debug(
+    Dumper(
+      [ dir     => $dir,
+        file    => $file,
+        outfile => $outfile
+      ]
+    )
   );
 
   my $rsp = $bucket->get_key_filename( "$prefix/$file", undef, $outfile );
-  print {*STDERR} Dumper( [ rsp => $rsp, outfile => $outfile ] );
 
-  print {*STDERR} Dumper( [ size => -s $outfile ] );
+  $self->get_logger->debug(
+    Dumper(
+      [ rsp     => $rsp,
+        outfile => $outfile,
+        size    => -s $outfile
+      ]
+    )
+  );
 
   return -s $outfile ? $outfile : $EMPTY;
 }

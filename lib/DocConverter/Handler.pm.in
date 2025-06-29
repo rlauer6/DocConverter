@@ -4,7 +4,7 @@ use strict;
 use warnings;
 
 use APR::Table;
-use Apache2::Const -compile => qw(OK);
+use Apache2::Const -compile => qw(OK HTTP_BAD_REQUEST SERVER_ERROR HTTP_ACCEPTED);
 use Apache2::Cookie;
 use Apache2::Log();
 use Apache2::Request;
@@ -33,6 +33,7 @@ BEGIN {
       endpoint_url => $config->{endpoint_url} // $ENV{AWS_ENDPOINT_URL},
       bucket_name  => $config->{bucket_name}  // $ENV{AWS_BUCKET_NAME},
       queue_url    => $config->{queue_url}    // $ENV{AWS_QUEUE_URL},
+      log_level    => $config->{log_level}    // 'info',
     );
   };
 }
@@ -51,40 +52,155 @@ sub handler {
 
     $r->print( sprintf '<pre>%s</pre>', $DOC_CONVERTER_STATUS );
 
-    return Apache2::Const::OK;
+    return Apache2::Const::SERVER_ERROR;
   }
 
-  if ( $r->method eq 'GET' ) {
-    $r->content_type('text/html');
+  my $uri    = $r->uri;
+  my $method = $r->method;
 
-    $r->print('Hello World!');
+  # rethink URLs
+  my ( $api, $document_id ) = $uri =~ /^\/converter\/?([^\/]+)\/?([^\/]+)?$/xsm;
+
+  $api         //= $EMPTY;
+  $document_id //= $EMPTY;
+
+  $r->log->info('converter started...');
+  $r->log->info( sprintf 'document-id: [%s]', $document_id );
+  $r->log->info( sprintf '        api: [%s]', $api );
+  $r->log->info( sprintf '     method: [%s]', $method );
+  $r->log->info( sprintf '        uri: [%s]', $r->uri );
+
+  # GET /converter/{document-id}
+  if ( !$document_id && validate_document_id($api) ) {
+    $document_id = $api;
+    $api         = $EMPTY;
   }
 
-  if ( $r->method eq 'POST' ) {
-    my $req    = Apache2::Request->new($r);
-    my $upload = $req->upload('upload');
+  # GET /converter/{document-id}         => retrieve a document
+  # GET /converter/status/{document-id}  => return converstion status
+  # GET /converter/wake-up               => wake-up the queue handler
+  # POST /converter                      => upload a document for conversion
 
-    my $filename = '/tmp/' . $upload->filename;
-    $upload->link($filename);
+  my %dispatch = (
+    POST => { $EMPTY => \&_api_upload, },
+    GET  => {
+      status    => \&_api_status,
+      $EMPTY    => \&_api_download,
+      'wake-up' => \&_api_wake_up,
+    },
+  );
 
-    $r->content_type('application/json');
-    my $document_id;
+  return Apache2::Const::HTTP_BAD_REQUEST
+    if !$dispatch{$method}->{$api};
 
-    if ($DOC_CONVERTER) {
-      $document_id = $DOC_CONVERTER->upload_file($filename);
+  $r->log->info( sprintf 'dispatching %s => [%s]', $method, $api );
+
+  return $dispatch{$method}->{$api}->( $r, $api, $document_id );
+}
+
+########################################################################
+sub _api_wake_up {
+########################################################################
+  my ($r) = @_;
+
+  $DOC_CONVERTER->wake_up();
+
+  return Apache2::Const::HTTP_ACCEPTED;
+}
+
+########################################################################
+sub _api_status {
+########################################################################
+  my ( $r, $api, $document_id ) = @_;
+
+  my $status = $DOC_CONVERTER->get_document_status($document_id);
+
+  my $response = {
+    status => $status ? 'complete'         : 'pending',
+    data   => $status ? from_json($status) : $EMPTY,
+  };
+
+  $r->content_type('application/json');
+  $r->print( to_json( $response, { pretty => $TRUE } ) );
+
+  return Apache2::Const::OK;
+}
+
+########################################################################
+sub _api_upload {
+########################################################################
+  my ( $r, $api ) = @_;
+
+  my $req    = Apache2::Request->new($r);
+  my $upload = eval { return $req->upload('upload'); };
+
+  if ( !$upload || $EVAL_ERROR ) {
+    $r->log->error( sprintf 'failed to upload document: %s', $EVAL_ERROR );
+    return Apache2::Const::HTTP_BAD_REQUEST;
+  }
+
+  my $filename = '/tmp/' . $upload->filename;
+  $upload->link($filename);
+
+  $r->content_type('application/json');
+  my $metadata = {
+    tempname     => $upload->tempname,
+    filename     => $upload->filename,
+    content_type => $upload->type,
+  };
+
+  my $document_id = $DOC_CONVERTER->upload_file( $filename, $EMPTY, $metadata );
+
+  $r->print( to_json( $metadata, { pretty => $TRUE } ) );
+
+  return Apache2::Const::OK;
+}
+
+########################################################################
+sub _api_download {
+########################################################################
+  my ( $r, $api, $document_id ) = @_;
+
+  my $metadata = $DOC_CONVERTER->download_file($document_id);
+  my $tmpfile  = $metadata->{tempfile};
+
+  my $content_type = $metadata->{content_type};
+
+  $r->content_type($content_type);
+
+  my $type = $content_type =~ /pdf/ixsm ? 'inline' : 'attachment';
+
+  my $disposition_header = sprintf '%s; filename=%s', $type, $metadata->{filename};
+
+  $r->headers_out->set( 'Content-Disposition' => $disposition_header );
+  $r->headers_out->set( 'Content-Length'      => -s $tmpfile );
+
+  eval {
+    my $buf;
+
+    open my $fh, '<', $tmpfile
+      or die "unable to open file $tmpfile\n";
+
+    while ( read $fh, $buf, 8192 ) {
+      $r->print($buf);
     }
 
-    $r->print(
-      to_json(
-        { document_id => $document_id,
-          tempname    => $upload->tempname,
-          filename    => $upload->filename,
-        }
-      )
-    );
+    close $fh;
+  };
+
+  if ($EVAL_ERROR) {
+    $r->log->error("error downloading $document_id: $EVAL_ERROR");
   }
 
   return Apache2::Const::OK;
+}
+
+########################################################################
+sub validate_document_id {
+########################################################################
+  my ($document_id) = @_;
+
+  return $document_id =~ /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/xsm;
 }
 
 1;

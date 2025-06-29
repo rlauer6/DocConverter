@@ -1,3 +1,46 @@
+Sat Jun 28 15:04:54 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.3]:
+	* VERSION: bump
+	* Makefile: make .pm ro
+	* TODO.md: updates
+	* doc-converter.conf
+	- separate mod_per/mod_cgi directives
+	* lib/DocConverter/Client.pm.in
+	(get_document_status): new
+	(fetch_metadata): new
+	(wake_up): new
+	(download_file): new
+	(upload_file)
+	- add file name to message
+	- write metadata to folder
+	(new): initialize logger
+	* lib/DocConverter/Handler.pm.in
+	(BEGIN): set log_level
+	(handler)
+	- return SERVER_ERROR if we can instantiate Client
+	- output request info
+	- dispatch requests to api methods
+	(_api_wake_up): new
+	(_api_upload): new
+	(_api_status): new
+	(_api__download): new
+	(validate_document_id): new
+	* lib/DocConverter/Role/Helpers.pm.in
+	(convert_document)
+	- write better error file
+	* lib/DocConverter/Role/S3.pm.in
+	(put_object)
+	- accept file or content
+	(get_object):
+	- make sure $file is basename
+	- use logger
+	* lib/DocConverter/Utils.pm.in
+	(slurp): new
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	(handler)
+	- expect document name instead of assuming only 1 file
+
 Wed Jun 25 10:30:57 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.2]:

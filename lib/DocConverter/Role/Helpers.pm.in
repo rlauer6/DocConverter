@@ -233,20 +233,21 @@ sub convert_document {
     return $self->get_object( $document_id, $file );
   };
 
-  $self->benchmark('s3_time');
-
   if ( !$infile || !-s $infile || $EVAL_ERROR ) {
     $self->get_logger->error($EVAL_ERROR);
 
     $self->write_status_file(
       $document_id,
       { document_id => $document_id,
-        error       => $self->get_s3_client->errstr
+        errstr      => $self->get_s3_client->errstr,
+        error       => $EVAL_ERROR // 'unknown error',
       }
     );
 
     return;
   }
+
+  $self->benchmark('s3_time');
 
   my %result = ( 'document-id' => $document_id );
 

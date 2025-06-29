@@ -45,12 +45,16 @@ sub handler {
     )
   );
 
-  my ( $bucket_name, $document_id, $action ) = @{$params}{qw(bucket_name document_id action)};
+  my ( $bucket_name, $document_id, $filename, $action ) = @{$params}{qw(bucket_name document_id file action)};
+
+  $action //= 'convert';
+
+  return $TRUE
+    if $action eq 'wake-up';
 
   my ( $pdf, $thumb ) = @{$params}{qw(pdf thumb)};
 
-  $action //= 'convert';
-  $pdf    //= $TRUE;
+  $pdf //= $TRUE;
 
   $bucket_name //= $self->get_bucket_name;
 
@@ -61,7 +65,8 @@ sub handler {
   $self->convert_document(
     document_id => $document_id,
     pdf         => $pdf,
-    thumb       => $thumb
+    thumb       => $thumb,
+    file        => $filename,
   );
 
   return $TRUE;

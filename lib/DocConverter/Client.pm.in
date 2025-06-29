@@ -5,10 +5,12 @@ use warnings;
 
 use Carp;
 use Data::Dumper;
-use DocConverter::Constants;
-use English qw(no_match_vars);
 use Data::UUID;
-
+use DocConverter::Constants;
+use DocConverter::Utils;
+use English qw(no_match_vars);
+use File::Basename qw(basename);
+use JSON;
 use Role::Tiny::With;
 
 with 'DocConverter::Role::S3';
@@ -17,7 +19,18 @@ with 'DocConverter::Role::SQS';
 use parent qw(Class::Accessor::Fast);
 
 __PACKAGE__->follow_best_practice;
-__PACKAGE__->mk_accessors(qw(bucket_name endpoint_url file host base_url logger document_id));
+__PACKAGE__->mk_accessors(
+  qw(
+    base_url
+    bucket_name
+    document_id
+    endpoint_url
+    file
+    host
+    log_level
+    logger
+  )
+);
 
 ########################################################################
 sub create_document_id {
@@ -34,11 +47,63 @@ sub create_document_id {
 }
 
 ########################################################################
+sub get_document_status {
+########################################################################
+  my ( $self, $document_id ) = @_;
+
+  my $bucket = $self->get_bucket;
+
+  my $head = $bucket->head_key("$document_id/status.json");
+
+  return
+    if !$head;
+
+  my $status = $bucket->get_key("$document_id/status.json");
+
+  return $status->{value};
+}
+
+########################################################################
+sub fetch_metadata {
+########################################################################
+  my ( $self, $document_id ) = @_;
+
+  my $metadata_file = $self->get_object( $document_id, "$document_id.json" );
+
+  return slurp( $metadata_file, $TRUE );
+}
+
+########################################################################
+sub wake_up {
+########################################################################
+  my ($self) = @_;
+
+  return $self->send_message( { action => 'wake-up' } );
+}
+
+########################################################################
+sub download_file {
+########################################################################
+  my ( $self, $document_id, $file ) = @_;
+
+  my $metadata = $self->fetch_metadata($document_id);
+
+  if ( !$file ) {
+    $file = $metadata->{filename};
+  }
+
+  $metadata->{tempfile} = $self->get_object( $document_id, $file );
+
+  return $metadata;
+}
+
+########################################################################
 sub upload_file {
 ########################################################################
-  my ( $self, $file, $action ) = @_;
+  my ( $self, $file, $action, $metadata ) = @_;
 
   my $document_id = $self->create_document_id;
+  $metadata->{document_id} = $document_id;
 
   my $rsp = $self->put_object( $document_id, $file );
 
@@ -46,12 +111,15 @@ sub upload_file {
     if !$rsp;
 
   my $message = {
+    file        => basename($file),
     document_id => $document_id,
     bucket_name => $self->get_bucket_name,
     $action ? ( action => $action ) : ()
   };
 
   $self->send_message($message);
+
+  $self->put_object( $document_id, "${document_id}.json", to_json($metadata) );
 
   return $document_id;
 }
@@ -76,6 +144,17 @@ sub new {
 
   $self->init_s3_client();
   $self->init_sqs_client();
+
+  my $logger = eval {
+    my $log_level = $self->get_log_level;
+    return init_logger($log_level);
+  };
+
+  if ( $logger || $EVAL_ERROR ) {
+    print {*STDERR} "WARN: could not initiate logger object: %s\n", $EVAL_ERROR;
+  }
+
+  $self->set_logger($logger);
 
   return $self;
 }

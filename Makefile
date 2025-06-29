@@ -52,8 +52,10 @@ $(GCLIENT): $(GCONSTANTS) $(GROLES)
 $(GHANDLER): $(GROLES) $(GPERL_MODULES)
 
 %.pm: %.pm.in
+	rm -f $@
 	sed "s/[@]PACKAGE_VERSION[@]/$(VERSION)/g" $< > $@
 	perl -wc -I lib $@
+	chmod -w $@
 
 $(GPERL_MODULES): $(GCONSTANTS) $(PERL_MODULES)
 
