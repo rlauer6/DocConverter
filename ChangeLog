@@ -1,3 +1,31 @@
+Thu Jul  3 14:12:18 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.5]:
+	* TODO.md: updated
+	* VERSION: bump
+	* docker-compose.yml
+	- + jquery.tagsinput.css, jquery.tagsinput.js
+	* jquery.tagsinput.css: new
+	* jquery.tagsinput.js: new
+	* lib/DocConverter/Handler.pm.in
+	- pod updates
+	(inline_image_tag): moved to DocConverter::Role::Helpers
+	(_api_upload)
+	- accept tags, client_id
+	(_api_download)
+	- get image tag from metadata
+	(is_admin): new
+	* lib/DocConverter/Role/Helpers.pm.in
+	(inline_image_tag): new from DocConverte::Handler
+	(convert_document): return metadata
+	(create_thumb_nails): add image tag to metadata
+	* lib/DocConverter/Role/S3.pm.in
+	(put_object): croak if content with no object name
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	(handler): merge metadata from conversion
+	* upload.html: tagsinput
+	* upload.js: likewise
+
 Thu Jul  3 14:09:58 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.4]:

@@ -29,7 +29,6 @@ use English qw(no_match_vars);
 use File::ShareDir qw(dist_dir);
 use File::Basename qw(fileparse);
 use JSON;
-use MIME::Base64 qw(encode_base64);
 
 use SQS::Queue::Worker qw(fetch_config);
 
@@ -276,8 +275,15 @@ sub _api_upload {
 
   $r->content_type('application/json');
 
+  my $tags = $params->{tags};
+
+  if ($tags) {
+    $tags = [ split /\s*,\s*/xsm, $tags ];
+  }
+
   my $metadata = {
-    tempname     => $upload->tempname,
+    tags         => $tags,
+    client_id    => $params->{client_id} // $EMPTY,
     filename     => $upload->filename,
     content_type => $upload->type,
     upload_time  => time,
@@ -286,8 +292,9 @@ sub _api_upload {
 
   my ( $name, undef, $ext ) = fileparse( $upload->filename, qr/[.][^.]+$/xsm );
 
-  my $action = $params->{action} // 'store';
-  my $thumb  = $params->{thumb};
+  my ( $action, $thumb ) = @{$params}{qw(action thumb)};
+  $action ||= 'store';
+
   $document_id = $DOC_CONVERTER->upload_file( $upload->tempname, $action, $metadata, $thumb );
 
   $metadata->{document_id} = $document_id;
@@ -359,7 +366,7 @@ sub _api_download {
   $r->content_type($content_type);
 
   if ( $content_type eq 'text/html' ) {
-    my $tag = inline_image_tag($tmpfile);
+    my $tag = $metadata->{result}->{thumbs}->[0]->{tag};
     $r->headers_out->set( 'Content-Length' => length $tag );
     $r->print($tag);
 
@@ -398,42 +405,14 @@ sub _api_download {
 }
 
 ########################################################################
-sub inline_image_tag {
+sub is_admin {
 ########################################################################
-  my ($filename) = @_;
+  my ($r) = @_;
 
-  croak "usage: inline_image_tag(filename)\n"
-    if !$filename;
+  my $x_api_key = $r->headers_in->{'X-Api-Key'} // $EMPTY;
+  my $api_key   = $ENV{API_KEY}                 // $EMPTY;
 
-  my $ext = lc $filename;
-  $ext =~ s{.*[.]}{}xsm;  # extract file extension
-
-  my %mime_type_for = (
-    png  => 'image/png',
-    jpg  => 'image/jpeg',
-    jpeg => 'image/jpeg',
-    gif  => 'image/gif',
-    svg  => 'image/svg+xml',
-    webp => 'image/webp',
-  );
-
-  my $mime = $mime_type_for{$ext};
-
-  croak "unsupported type $ext\n"
-    if !$mime;
-
-  local $RS = undef;
-
-  open my $fh, '<', $filename
-    or croak "could not open $filename for reading\n";
-
-  my $data = <$fh>;
-
-  close $fh;
-
-  my $b64 = encode_base64( $data, $EMPTY );
-
-  return sprintf '<img src="data:%s;base64,%s" />', $mime, $b64;
+  return $api_key eq $x_api_key;
 }
 
 ########################################################################
@@ -462,7 +441,6 @@ DocConverter::Handler
     Response: {
       "filename": "...",
       "content_type": "...",
-      "tempname": "...",
       "document_id": "..."
     }
 
@@ -478,11 +456,38 @@ DocConverter::Handler
       "data": { ... }
     }
 
-  # Retrieve the converted file
+  # Retrieve the stored document
   GET /converter/<document-id>
+
+  # Retrieve the converted document
+  GET /converter/<document-id>>?type=pdf
+
+  # Retrieve a preview
+  GET /converter/<document-id>>?type=preview
+
+  # Retrieve an image tag of the preview
+  GET /converter/<document-id>>?type=preview&format=tag
+
+  # Retrieve document metadata
+  GET /converter/<document-id>>?type=metadata
+    Response:
+    {
+      "upload_date": "Thu Jul  3 17:11:52 2025",
+      "filename": "resume-long.docx",
+      "upload_time": 1751562712,
+      "document_id": "D06E7E7C-5830-11F0-897C-E71CCD741B14",
+      "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    }
 
   # Wake up the background processor to reduce conversion latency
   GET /converter/wake-up
+
+  # Return the API version
+  GET /converter/version
+    Response: M.m.r
+
+  # Delete a document
+  DELETE /converter/<document-id>
 
 =head1 DESCRIPTION
 
@@ -722,6 +727,9 @@ C</converter> path:
   PerlPassEnv AWS_QUEUE_URL
   PerlPassEnv AWS_ACCESS_KEY_ID
   PerlPassEnv AWS_SECRET_ACCESS_KEY
+
+  # Optional admin key
+  PerlSetEnv API_KEY B9648D2C-582E-11F0-B5D8-BCBA5E547432
 
   # Mount the handler at /converter
   <LocationMatch "^/converter/?">

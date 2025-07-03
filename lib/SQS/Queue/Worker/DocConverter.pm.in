@@ -5,6 +5,7 @@ use warnings;
 
 use Data::Dumper;
 use English qw(no_match_vars);
+use JSON;
 use SQS::Queue::Constants qw(:all);
 
 use Role::Tiny::With;
@@ -59,11 +60,19 @@ sub handler {
 
   my $metadata = $self->fetch_metadata($document_id);
 
-  $self->convert_document(
+  my $result = $self->convert_document(
     document_id  => $document_id,
     pdf          => $action,
     thumb        => $thumb,
     content_type => $metadata->{content_type},
+  );
+
+  $metadata->{result} = $result;
+
+  $self->put_object(
+    prefix  => $document_id,
+    name    => "${document_id}.json",
+    content => to_json($metadata)
   );
 
   return $TRUE;

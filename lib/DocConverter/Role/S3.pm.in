@@ -72,6 +72,9 @@ sub put_object {
 
   my $bucket = $self->bucket;
 
+  croak "no object name\n"
+    if $content && !$name;
+
   return $bucket->add_key( "$prefix/$name", $content )
     if $content;
 

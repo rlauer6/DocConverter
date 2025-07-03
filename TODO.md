@@ -9,5 +9,6 @@
 [ ] create test endpoints (upload.html)
 [ ] create deployment scripts for Fargate
 [ ] replace use of aws cli with script
-[ ] thumbnails
-[ ] allow uploading of additional metadata
+[X] thumbnails
+[X] allow uploading of additional metadata
+[ ] add download type to upload.html

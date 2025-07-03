@@ -3,7 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <title>Document Converter</title>
+    <link rel="stylesheet" href="jquery.tagsinput.css">
     <style>
+      div.tagsinput span.tag {
+          background-color: #0074d9;
+          color: white;
+          padding: 2px 8px;
+          margin-right: 5px;
+          border-radius: 3px;
+          display: inline-block;
+      }
+      .tagsinput span.tag a {
+          color: white !important;
+          font-weight: bold;
+          padding: 0 0px;
+          text-decoration: none;
+          font-family: sans-serif;
+      }
+      
+      .tagsinput span.tag a:hover {
+          color: #ffcccc;
+      }
+
       .form-group {
           margin-bottom: 1em;
       }
@@ -94,10 +115,14 @@
       <div class="form-group">
         <button type="submit">Upload</button>
       </div>
-    </form>
+
+      <input id="tags" name="tags" />
+   </form>
 
     <div id="uploads"></div>
 
     <script src="/upload.js"></script>
+    <script src="jquery.tagsinput.js"></script>
+
   </body>
 </html>

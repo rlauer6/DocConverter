@@ -11,6 +11,7 @@ use File::Basename qw(basename fileparse dirname);
 use File::Temp qw(tempfile tempdir);
 use IPC::Run qw(run);
 use JSON;
+use MIME::Base64 qw(encode_base64);
 use Time::HiRes qw(gettimeofday tv_interval);
 
 use Role::Tiny;
@@ -267,18 +268,18 @@ sub convert_document {
   }
 
   if ($thumb) {
-    my $meta_data = $self->create_thumb_nails(
+    my $thumb_metadata = $self->create_thumb_nails(
       thumb       => $thumb,
       infile      => $content_type =~ /png|jpe?g/xsm ? $infile : $outfile,
       document_id => $document_id
     );
 
-    $result{thumbs} = $meta_data;
+    $result{thumbs} = $thumb_metadata;
   }
 
   $self->write_status_file( $document_id, \%result );
 
-  return;
+  return \%result;
 }
 
 ########################################################################
@@ -340,6 +341,7 @@ sub create_thumb_nails {
 
     push @thumbnail_metadata,
       {
+      tag  => inline_image_tag($thumbnail_file),
       name => "$name$ext",
       size => ( -s $thumbnail_file ),
       s3   => sprintf( 's3://%s/%s/%s%s', $self->get_bucket_name, $document_id, $name, $ext ),
@@ -351,6 +353,45 @@ sub create_thumb_nails {
   $self->benchmark('s3_time');
 
   return \@thumbnail_metadata;
+}
+
+########################################################################
+sub inline_image_tag {
+########################################################################
+  my ($filename) = @_;
+
+  croak "usage: inline_image_tag(filename)\n"
+    if !$filename;
+
+  my $ext = lc $filename;
+  $ext =~ s{.*[.]}{}xsm;  # extract file extension
+
+  my %mime_type_for = (
+    png  => 'image/png',
+    jpg  => 'image/jpeg',
+    jpeg => 'image/jpeg',
+    gif  => 'image/gif',
+    svg  => 'image/svg+xml',
+    webp => 'image/webp',
+  );
+
+  my $mime = $mime_type_for{$ext};
+
+  croak "unsupported type $ext\n"
+    if !$mime;
+
+  local $RS = undef;
+
+  open my $fh, '<', $filename
+    or croak "could not open $filename for reading\n";
+
+  my $data = <$fh>;
+
+  close $fh;
+
+  my $b64 = encode_base64( $data, $EMPTY );
+
+  return sprintf '<img src="data:%s;base64,%s" />', $mime, $b64;
 }
 
 1;

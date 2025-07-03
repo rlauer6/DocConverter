@@ -5,6 +5,27 @@ $(function () {
         console.log('Converter woken up.');
     });
 
+    $('#tags').tagsInput({
+      'defaultText': 'add a tag',
+      'width': '300px',
+      'height': 'auto',
+      'interactive': true,
+      'delimiter': ',',
+      'removeWithBackspace': true,
+      'minChars': 1
+    });
+
+    $(document).on('keypress', '.tagsinput input', function(e) {
+        if (e.which === 13) { // Enter key
+            e.preventDefault(); // prevent form submit or newline
+            const val = $(this).val();
+            if (val.length > 0) {
+                $(this).closest('.tagsinput').prev().addTag(val);
+                $(this).val('');
+            }
+        }
+    });
+
     $('#create-preview').on('change', function () {
         const enabled = this.checked;
         $('#preview-height').prop('disabled', !enabled);
@@ -37,7 +58,11 @@ $(function () {
         const $meta = $row.find('.metadata');
 
         const action = $('#action').is(':checked') ? 'pdf' : '';
-        let query = '';
+
+        var tags = encodeURIComponent($('#tags').val());
+        console.log(tags);
+
+        let query = '?action=' + action + '&tags=' + tags;
 
         if ($('#create-preview').is(':checked')) {
             var h = $('#preview-height').val();
@@ -49,7 +74,7 @@ $(function () {
                 w = '';
             }
             var thumb = `${h}x${w}`;
-            query = `?action=${action}&thumb=${thumb}`;
+            query = query + '&thumb=' + thumb;
         }
 
         $.ajax({

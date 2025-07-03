@@ -45,6 +45,8 @@ services:
       - "./upload.html:/var/www/html/upload.html"
       - "./upload.js:/var/www/html/upload.js"
       - "./apache2.conf:/etc/apache2/apache2.conf"
+      - "./jquery.tagsinput.css:/var/www/html/jquery.tagsinput.css"
+      - "./jquery.tagsinput.js:/var/www/html/jquery.tagsinput.js"
     tty: true
     stdin_open: true
     ports:
