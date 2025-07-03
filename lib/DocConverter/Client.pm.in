@@ -11,6 +11,7 @@ use DocConverter::Utils;
 use English qw(no_match_vars);
 use File::Basename qw(basename);
 use JSON;
+
 use Role::Tiny::With;
 
 with 'DocConverter::Role::S3';
@@ -22,7 +23,6 @@ __PACKAGE__->follow_best_practice;
 __PACKAGE__->mk_accessors(
   qw(
     base_url
-    bucket_name
     document_id
     endpoint_url
     file
@@ -53,12 +53,14 @@ sub get_document_status {
 
   my $bucket = $self->get_bucket;
 
-  my $head = $bucket->head_key("$document_id/status.json");
+  my $status_file = sprintf '%s/status.json', $document_id;
+
+  my $head = $bucket->head_key($status_file);
 
   return
     if !$head;
 
-  my $status = $bucket->get_key("$document_id/status.json");
+  my $status = $bucket->get_key($status_file);
 
   return $status->{value};
 }
@@ -88,11 +90,7 @@ sub download_file {
 
   my $metadata = $self->fetch_metadata($document_id);
 
-  if ( !$file ) {
-    $file = $metadata->{filename};
-  }
-
-  $metadata->{tempfile} = $self->get_object( $document_id, $file );
+  $metadata->{tempfile} = $self->get_object( $document_id, "${document_id}.dat" );
 
   return $metadata;
 }
@@ -100,26 +98,43 @@ sub download_file {
 ########################################################################
 sub upload_file {
 ########################################################################
-  my ( $self, $file, $action, $metadata ) = @_;
+  my ( $self, $file, $action, $metadata, $thumb ) = @_;
 
   my $document_id = $self->create_document_id;
   $metadata->{document_id} = $document_id;
 
-  my $rsp = $self->put_object( $document_id, $file );
+  $self->get_logger->info('uploading file...');
+  $self->get_logger->info( sprintf '        file: [%s]', $file );
+  $self->get_logger->info( sprintf '      action: [%s]', $action               // q{} );
+  $self->get_logger->info( sprintf '    filename: [%s]', $metadata->{filename} // q{} );
+  $self->get_logger->info( sprintf ' document_id: [%s]', $metadata->{document_id} );
+
+  my $rsp = $self->put_object(
+    prefix => $document_id,
+    file   => $file,
+    name   => "${document_id}.dat"
+  );
 
   croak sprintf "could not upload %s/%s: %s\n", $document_id, $file, $self->get_s3_client->errstr
     if !$rsp;
 
-  my $message = {
-    file        => basename($file),
-    document_id => $document_id,
-    bucket_name => $self->get_bucket_name,
-    $action ? ( action => $action ) : ()
-  };
+  $self->put_object(
+    prefix  => $document_id,
+    name    => "${document_id}.json",
+    content => to_json($metadata)
+  );
 
-  $self->send_message($message);
+  if ( $action eq 'pdf' ) {
+    my $message = {
+      document_id => $document_id,
+      bucket_name => $self->get_bucket_name,
+      action      => $action,
+      thumb       => $thumb,
+    };
 
-  $self->put_object( $document_id, "${document_id}.json", to_json($metadata) );
+    $self->get_logger->info( sprintf 'sending message...%s', $message );
+    $self->send_message($message);
+  }
 
   return $document_id;
 }
@@ -134,6 +149,8 @@ sub new {
   $options->{host}     //= $DEFAULT_HOST;
   $options->{base_url} //= $DEFAULT_BASE_URL;
 
+  my $no_logger = delete $options->{no_logger};
+
   # check required arguments
   foreach (qw(bucket_name queue_url)) {
     next if exists $options->{$_};
@@ -145,16 +162,18 @@ sub new {
   $self->init_s3_client();
   $self->init_sqs_client();
 
-  my $logger = eval {
-    my $log_level = $self->get_log_level;
-    return init_logger($log_level);
-  };
+  if ( !$no_logger ) {
+    my $logger = eval {
+      my $log_level = $self->get_log_level;
+      return init_logger($log_level);
+    };
 
-  if ( $logger || $EVAL_ERROR ) {
-    print {*STDERR} "WARN: could not initiate logger object: %s\n", $EVAL_ERROR;
+    if ( $logger || $EVAL_ERROR ) {
+      print {*STDERR} "WARN: could not initiate logger object: %s\n", $EVAL_ERROR;
+    }
+
+    $self->set_logger($logger);
   }
-
-  $self->set_logger($logger);
 
   return $self;
 }

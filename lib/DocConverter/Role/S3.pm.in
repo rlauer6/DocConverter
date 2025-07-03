@@ -5,27 +5,31 @@ use warnings;
 
 use Amazon::S3;
 use Amazon::Credentials;
+use Carp;
 use Data::Dumper;
 use English qw(no_match_vars);
 use File::Basename qw(fileparse basename);
 use File::Temp qw(tempdir tempfile);
 use DocConverter::Constants;
+use DocConverter::Utils;
+use JSON;
 
 use Role::Tiny;
 
 use parent qw(Class::Accessor::Fast);
 
 __PACKAGE__->follow_best_practice;
-__PACKAGE__->mk_accessors(qw(s3_client bucket));
+__PACKAGE__->mk_accessors(qw(s3_client bucket bucket_name max_keys));
 
 ########################################################################
 sub init_s3_client {
 ########################################################################
-  my ($self) = @_;
+  my ( $self, $bucket_name ) = @_;
 
   my $endpoint_url = $self->get_endpoint_url;
 
   my $credentials = $self->get_credentials;
+
   $credentials //= Amazon::Credentials->new(
     no_passkey_warning => 1,
     order              => [qw(env role)]
@@ -47,7 +51,14 @@ sub init_s3_client {
   my $s3_client = Amazon::S3->new(%options);
   $self->set_s3_client($s3_client);
 
-  $self->set_bucket( $s3_client->bucket( $self->get_bucket_name ) );
+  $bucket_name //= $self->get_bucket_name;
+
+  croak "no bucket defined\n"
+    if !$bucket_name;
+
+  $self->set_bucket_name($bucket_name);
+
+  $self->set_bucket( $s3_client->bucket($bucket_name) );
 
   return $s3_client;
 }
@@ -55,31 +66,88 @@ sub init_s3_client {
 ########################################################################
 sub put_object {
 ########################################################################
-  my ( $self, $prefix, $file, $content ) = @_;
+  my ( $self, %args ) = @_;
 
-  my $bucket = $self->get_bucket;
+  my ( $prefix, $file, $content, $name ) = @args{qw(prefix file content name)};
 
-  return $bucket->add_key( "$prefix/$file", $content )
+  my $bucket = $self->bucket;
+
+  return $bucket->add_key( "$prefix/$name", $content )
     if $content;
 
-  my ( $key, undef, $ext ) = fileparse( $file, qr/[.][^.]*$/xsm );
+  my $object_name;
 
-  my $object_name = sprintf '%s/%s%s', $prefix, $key, $ext;
+  if ( !$name ) {
+    my ( $key, undef, $ext ) = fileparse( $file, qr/[.][^.]*$/xsm );
+    $object_name = sprintf '%s/%s%s', $prefix, $key, $ext;
+  }
+  else {
+    $object_name = "$prefix/$name";
+  }
 
   my $rsp = $bucket->add_key_filename( $object_name, $file );
 
   return $rsp ? $file : undef;
+}
 
+########################################################################
+sub fetch_metadata {
+########################################################################
+  my ( $self, $document_id ) = @_;
+
+  my $metadata = $self->get_object( $document_id, "${document_id}.json", $TRUE );
+
+  croak "could not fetch $document_id/$document_id.json from bucket\n"
+    if !$metadata;
+
+  return from_json($metadata);
+}
+
+########################################################################
+sub s3_client {
+########################################################################
+  my ( $self, $bucket_name ) = @_;
+
+  return $self->get_s3_client // $self->init_s3_client($bucket_name);
+}
+
+########################################################################
+sub bucket {
+########################################################################
+  my ( $self, $bucket_name ) = @_;
+
+  $self->s3_client($bucket_name);
+
+  return $self->get_bucket;
+}
+
+########################################################################
+sub fetch_object {
+########################################################################
+  my ( $self, %args ) = @_;
+
+  my ( $prefix, $key, $json ) = @args{qw(prefix key json)};
+
+  my $object = $self->get_object( $prefix, $key, $TRUE );
+
+  return $json ? from_json($object) : $object;
 }
 
 ########################################################################
 sub get_object {
 ########################################################################
-  my ( $self, $prefix, $file ) = @_;
+  my ( $self, $prefix, $file, $raw ) = @_;
 
-  my $bucket = $self->get_bucket;
+  my $bucket = $self->bucket;
 
   $file = basename($file);
+
+  my $object_name = sprintf '%s/%s', $prefix, $file;
+
+  if ($raw) {
+    my $rsp = $bucket->get_key($object_name);
+    return $rsp->{value};
+  }
 
   my $dir = tempdir( CLEANUP => $TRUE );
 
@@ -109,11 +177,98 @@ sub get_object {
 }
 
 ########################################################################
+sub list_folders {
+########################################################################
+  my ( $self, $marker ) = @_;
+
+  my $s3_client = $self->s3_client;
+
+  my $bucket_name = $self->get_bucket_name;
+
+  my $max_keys = $self->get_max_keys // $DEFAULT_MAX_KEYS;
+
+  my $list = $s3_client->list_bucket_v2(
+    { bucket     => $bucket_name,
+      'max-keys' => $max_keys,
+      delimiter  => $SLASH,
+      defined $marker ? ( 'continuation-token' => $marker ) : (),
+    }
+  );
+
+  return
+    if !$list;
+
+  return ( $list->{'common_prefixes'}, $list->{next_marker} );
+}
+
+########################################################################
+sub _list_folder {
+########################################################################
+  my ( $self, $prefix, $marker ) = @_;
+
+  my $s3_client = $self->s3_client;
+
+  my $bucket_name = $self->get_bucket_name;
+
+  my $max_keys = $self->get_max_keys // $DEFAULT_MAX_KEYS;
+
+  my $list = $s3_client->list_bucket_v2(
+    { bucket     => $bucket_name,
+      'max-keys' => $max_keys,
+      delimiter  => $SLASH,
+      prefix     => "$prefix/",
+      defined $marker ? ( 'continuation-token' => $marker ) : (),
+    }
+  );
+
+  return
+    if !$list;
+
+  return ( $list->{'keys'}, $list->{next_marker} );
+}
+
+########################################################################
+sub list_folder {
+########################################################################
+  my ( $self, $prefix ) = @_;
+
+  my ( $list, $marker );
+
+  my @keys;
+
+  while ($TRUE) {
+    ( $list, $marker ) = $self->_list_folder( $prefix, $marker );
+    last if !$list;
+
+    push @keys, @{$list};
+    last if !$marker;
+  }
+
+  return \@keys;
+}
+
+########################################################################
+sub fetch_folders {
+########################################################################
+  my ( $self, $folders ) = @_;
+
+  my $bucket = $self->bucket;
+
+  my @metadata;
+
+  foreach my $document_id ( @{$folders} ) {
+    push @metadata, $self->fetch_metadata($document_id);
+  }
+
+  return \@metadata;
+}
+
+########################################################################
 sub list_bucket {
 ########################################################################
   my ( $self, $prefix ) = @_;
 
-  my $bucket = $self->get_bucket;
+  my $bucket = $self->bucket;
 
   return $bucket->list( { prefix => $prefix } );
 }

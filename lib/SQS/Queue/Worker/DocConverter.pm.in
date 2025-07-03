@@ -45,16 +45,11 @@ sub handler {
     )
   );
 
-  my ( $bucket_name, $document_id, $filename, $action ) = @{$params}{qw(bucket_name document_id file action)};
-
-  $action //= 'convert';
+  my ( $bucket_name, $document_id, $action, $thumb )
+    = @{$params}{qw(bucket_name document_id action thumb)};
 
   return $TRUE
     if $action eq 'wake-up';
-
-  my ( $pdf, $thumb ) = @{$params}{qw(pdf thumb)};
-
-  $pdf //= $TRUE;
 
   $bucket_name //= $self->get_bucket_name;
 
@@ -62,11 +57,13 @@ sub handler {
 
   $self->set_bucket( $self->get_s3_client->bucket($bucket_name) );
 
+  my $metadata = $self->fetch_metadata($document_id);
+
   $self->convert_document(
-    document_id => $document_id,
-    pdf         => $pdf,
-    thumb       => $thumb,
-    file        => $filename,
+    document_id  => $document_id,
+    pdf          => $action,
+    thumb        => $thumb,
+    content_type => $metadata->{content_type},
   );
 
   return $TRUE;

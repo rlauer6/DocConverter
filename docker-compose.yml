@@ -43,6 +43,8 @@ services:
       - AWS_QUEUE_NAME=doc-converter
     volumes:
       - "./upload.html:/var/www/html/upload.html"
+      - "./upload.js:/var/www/html/upload.js"
+      - "./apache2.conf:/etc/apache2/apache2.conf"
     tty: true
     stdin_open: true
     ports:

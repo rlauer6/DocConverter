@@ -4,7 +4,15 @@ use strict;
 use warnings;
 
 use APR::Table;
-use Apache2::Const -compile => qw(OK HTTP_BAD_REQUEST SERVER_ERROR HTTP_ACCEPTED);
+
+use Apache2::Const -compile => qw(
+  HTTP_ACCEPTED
+  HTTP_BAD_REQUEST
+  HTTP_FORBIDDEN
+  SERVER_ERROR
+  OK
+);
+
 use Apache2::Cookie;
 use Apache2::Log();
 use Apache2::Request;
@@ -12,18 +20,25 @@ use Apache2::RequestIO();
 use Apache2::RequestRec();
 use Apache2::Upload;
 
+use Carp;
 use DocConverter::Client;
 use DocConverter::Constants;
 
 use Data::Dumper;
 use English qw(no_match_vars);
 use File::ShareDir qw(dist_dir);
+use File::Basename qw(fileparse);
 use JSON;
+use MIME::Base64 qw(encode_base64);
+
 use SQS::Queue::Worker qw(fetch_config);
 
 our $DOC_CONVERTER;
+our $DOC_CONVERTER_AUTH;
 
+########################################################################
 BEGIN {
+########################################################################
   my $dist_dir = dist_dir('DocConverter');
 
   my $config = fetch_config("$dist_dir/doc-converter-handler.yml");
@@ -33,14 +48,22 @@ BEGIN {
       endpoint_url => $config->{endpoint_url} // $ENV{AWS_ENDPOINT_URL},
       bucket_name  => $config->{bucket_name}  // $ENV{AWS_BUCKET_NAME},
       queue_url    => $config->{queue_url}    // $ENV{AWS_QUEUE_URL},
-      log_level    => $config->{log_level}    // 'info',
+      no_logger    => $TRUE,  # we'll use $r->log later
     );
+  };
+
+  $DOC_CONVERTER_AUTH = eval {
+    require DocConverter::Authorize;
+    my $auth = DocConverter::Authorize->new( config => $config );
+    return $auth->can('is_owner') && $auth;
   };
 }
 
 our $DOC_CONVERTER_STATUS = $EVAL_ERROR // 'OK';
 
-print {*STDERR} "Status: $DOC_CONVERTER_STATUS\n";
+print {*STDERR} "[DocConverter::Handler]: Status => [$DOC_CONVERTER_STATUS]\n";
+
+our $VERSION = '@PACKAGE_VERSION@';  # will be resolved at build time
 
 ########################################################################
 sub handler {
@@ -55,8 +78,12 @@ sub handler {
     return Apache2::Const::SERVER_ERROR;
   }
 
+  $DOC_CONVERTER->set_logger( $r->log );
+
   my $uri    = $r->uri;
   my $method = $r->method;
+  my $req    = Apache2::Request->new($r);
+  my $params = $req->param();
 
   # rethink URLs
   my ( $api, $document_id ) = $uri =~ /^\/converter\/?([^\/]+)\/?([^\/]+)?$/xsm;
@@ -69,6 +96,7 @@ sub handler {
   $r->log->info( sprintf '        api: [%s]', $api );
   $r->log->info( sprintf '     method: [%s]', $method );
   $r->log->info( sprintf '        uri: [%s]', $r->uri );
+  $r->log->info( sprintf '     params: [%s]', join $COMMA, keys %{ $params // {} } );
 
   # GET /converter/{document-id}
   if ( !$document_id && validate_document_id($api) ) {
@@ -76,18 +104,31 @@ sub handler {
     $api         = $EMPTY;
   }
 
-  # GET /converter/{document-id}         => retrieve a document
-  # GET /converter/status/{document-id}  => return converstion status
-  # GET /converter/wake-up               => wake-up the queue handler
-  # POST /converter                      => upload a document for conversion
+  # check document ownwership
+  if ($DOC_CONVERTER_AUTH) {
+    return Apache2::Const::HTTP_FORBIDDEN
+      if $document_id && !$DOC_CONVERTER_AUTH->is_owner( $document_id, get_session_cookie($r) );
+  }
+
+  # GET    /converter/version               => returns API version
+  # GET    /converter/list/{document-id}    => list document objects
+  # GET    /converter/list                  => list documents
+  # GET    /converter/{document-id}         => retrieve a document or metadata
+  # GET    /converter/status/{document-id}  => return conversion status
+  # GET    /converter/wake-up               => wake-up the queue handler
+  # POST   /converter                       => upload a document for conversion
+  # DELETE /converter/{document-id}         => delete a document
 
   my %dispatch = (
     POST => { $EMPTY => \&_api_upload, },
     GET  => {
+      version   => \&_api_version,
+      list      => \&_api_list,
       status    => \&_api_status,
       $EMPTY    => \&_api_download,
       'wake-up' => \&_api_wake_up,
     },
+    DELETE => { $EMPTY => \&_api_delete, }
   );
 
   return Apache2::Const::HTTP_BAD_REQUEST
@@ -95,7 +136,30 @@ sub handler {
 
   $r->log->info( sprintf 'dispatching %s => [%s]', $method, $api );
 
-  return $dispatch{$method}->{$api}->( $r, $api, $document_id );
+  return $dispatch{$method}->{$api}->( $r, $api, $document_id, $params );
+}
+
+########################################################################
+sub get_session_cookie {
+########################################################################
+  my ($r) = @_;
+
+  my $cookie_jar     = Apache2::Cookie::Jar->($r);
+  my $session_cookie = $cookie_jar->cookies('session');
+
+  return $session_cookie->value;
+}
+
+########################################################################
+sub _api_version {
+########################################################################
+  my ($r) = @_;
+
+  $r->content_type('text/plain');
+
+  $r->print($VERSION);
+
+  return Apache2::Const::OK;
 }
 
 ########################################################################
@@ -106,6 +170,21 @@ sub _api_wake_up {
   $DOC_CONVERTER->wake_up();
 
   return Apache2::Const::HTTP_ACCEPTED;
+}
+
+########################################################################
+sub _api_delete {
+########################################################################
+  my ( $r, $api, $document_id ) = @_;
+
+  my $keys = $DOC_CONVERTER->list_folder($document_id);
+
+  foreach ( @{$keys} ) {
+    $r->log->info( sprintf 'deleting: %s...', $_->{key} );
+    $DOC_CONVERTER->bucket->delete_key( $_->{key} );
+  }
+
+  return Apache2::Const::OK;
 }
 
 ########################################################################
@@ -127,11 +206,67 @@ sub _api_status {
 }
 
 ########################################################################
+sub _api_list {
+########################################################################
+  my ( $r, $api, $document_id, $params ) = @_;
+
+  return Apache2::Const::HTTP_FORBIDDEN
+    if !is_admin($r);
+
+  my $payload = eval {
+
+    # list keys in the folder...
+    if ($document_id) {
+      my $folder = $DOC_CONVERTER->list_folder($document_id);
+      return to_json( $folder, { pretty => $TRUE } );
+    }
+
+    # list folders (either page or no paging)
+    my $max_keys = $params->{'max-keys'};
+    my $marker   = $params->{'marker'};
+
+    my $list;
+
+    # return current page...
+    if ( $max_keys || $marker ) {
+      ( $list, $marker ) = $DOC_CONVERTER->list_folders($marker);
+      return to_json( { folders => $list, marker => $marker } );
+    }
+
+    # return all folders...
+    my @folders;
+
+    while ($TRUE) {
+      ( $list, $marker ) = $DOC_CONVERTER->list_folders($marker);
+      last if !$list;
+
+      push @folders, @{$list};
+
+      last if !$marker;
+    }
+
+    return to_json( \@folders );
+  };
+
+  if ( !$payload || $EVAL_ERROR ) {
+    $r->log->error( sprintf 'error listing folder: %s', $EVAL_ERROR );
+    return Apache2::Const::HTTP_BAD_REQUEST;
+  }
+
+  $r->content_type('application/json');
+
+  $r->print($payload);
+
+  return Apache2::Const::OK;
+}
+
+########################################################################
 sub _api_upload {
 ########################################################################
-  my ( $r, $api ) = @_;
+  my ( $r, $api, $document_id, $params ) = @_;
 
-  my $req    = Apache2::Request->new($r);
+  my $req = Apache2::Request->new($r);
+
   my $upload = eval { return $req->upload('upload'); };
 
   if ( !$upload || $EVAL_ERROR ) {
@@ -139,17 +274,23 @@ sub _api_upload {
     return Apache2::Const::HTTP_BAD_REQUEST;
   }
 
-  my $filename = '/tmp/' . $upload->filename;
-  $upload->link($filename);
-
   $r->content_type('application/json');
+
   my $metadata = {
     tempname     => $upload->tempname,
     filename     => $upload->filename,
     content_type => $upload->type,
+    upload_time  => time,
+    upload_date  => scalar localtime,
   };
 
-  my $document_id = $DOC_CONVERTER->upload_file( $filename, $EMPTY, $metadata );
+  my ( $name, undef, $ext ) = fileparse( $upload->filename, qr/[.][^.]+$/xsm );
+
+  my $action = $params->{action} // 'store';
+  my $thumb  = $params->{thumb};
+  $document_id = $DOC_CONVERTER->upload_file( $upload->tempname, $action, $metadata, $thumb );
+
+  $metadata->{document_id} = $document_id;
 
   $r->print( to_json( $metadata, { pretty => $TRUE } ) );
 
@@ -157,23 +298,83 @@ sub _api_upload {
 }
 
 ########################################################################
+sub _api_metadata {
+########################################################################
+  my ( $r, $document_id ) = @_;
+
+  my $metadata
+    = eval { return $DOC_CONVERTER->fetch_object( prefix => $document_id, key => "$document_id.json" ); };
+
+  if ( !$metadata || $EVAL_ERROR ) {
+    $r->log->error( sprintf 'unable to read metadata for %s', $document_id );
+    return Apache2::Const::HTTP_BAD_REQUEST;
+  }
+
+  $r->content_type('application/json');
+
+  $r->print($metadata);
+
+  return Apache2::Const::OK;
+}
+
+########################################################################
 sub _api_download {
 ########################################################################
-  my ( $r, $api, $document_id ) = @_;
+  my ( $r, $api, $document_id, $params ) = @_;
 
-  my $metadata = $DOC_CONVERTER->download_file($document_id);
-  my $tmpfile  = $metadata->{tempfile};
+  my $type   = $params->{type}   // $EMPTY;
+  my $format = $params->{format} // $EMPTY;
+
+  $r->log->info('_api_download: ');
+  $r->log->info( sprintf '         type: %s', $type );
+  $r->log->info( sprintf '       format: %s', $format );
+
+  return _api_metadata( $r, $document_id )
+    if $type eq 'metadata';
+
+  my $metadata = $DOC_CONVERTER->fetch_metadata($document_id);
+
+  my $folder = $DOC_CONVERTER->list_folder($document_id);
+
+  my $filename = "$document_id.dat";
 
   my $content_type = $metadata->{content_type};
 
+  if ( $type eq 'pdf' ) {
+    $filename     = "$document_id.pdf";
+    $content_type = 'application/pdf';
+  }
+  elsif ( $type eq 'preview' ) {
+    ($filename) = grep { $_ =~ /[.]png/xsm } map { $_->{key} } @{$folder};
+    $content_type = $format eq 'tag' ? 'text/html' : 'image/png';
+  }
+  elsif ($type) {
+    $r->log->error( 'invalid type: ' . $type );
+
+    return Apache2::Const::HTTP_BAD_REQUEST;
+  }
+
+  my $tmpfile = $DOC_CONVERTER->get_object( $document_id, $filename );
+
   $r->content_type($content_type);
 
-  my $type = $content_type =~ /pdf/ixsm ? 'inline' : 'attachment';
+  if ( $content_type eq 'text/html' ) {
+    my $tag = inline_image_tag($tmpfile);
+    $r->headers_out->set( 'Content-Length' => length $tag );
+    $r->print($tag);
 
-  my $disposition_header = sprintf '%s; filename=%s', $type, $metadata->{filename};
+    return Apache2::Const::OK;
+  }
 
-  $r->headers_out->set( 'Content-Disposition' => $disposition_header );
-  $r->headers_out->set( 'Content-Length'      => -s $tmpfile );
+  if ( !$type ) {
+    my $disposition_type = $content_type =~ /pdf/ixsm ? 'inline' : 'attachment';
+
+    my $disposition_header = sprintf '%s; filename=%s', $disposition_type, $metadata->{filename};
+
+    $r->headers_out->set( 'Content-Disposition' => $disposition_header );
+  }
+
+  $r->headers_out->set( 'Content-Length' => -s $tmpfile );
 
   eval {
     my $buf;
@@ -181,7 +382,7 @@ sub _api_download {
     open my $fh, '<', $tmpfile
       or die "unable to open file $tmpfile\n";
 
-    while ( read $fh, $buf, 8192 ) {
+    while ( read $fh, $buf, $BUFFER_SIZE ) {
       $r->print($buf);
     }
 
@@ -190,9 +391,49 @@ sub _api_download {
 
   if ($EVAL_ERROR) {
     $r->log->error("error downloading $document_id: $EVAL_ERROR");
+    return Apache2::Const::SERVER_ERROR;
   }
 
   return Apache2::Const::OK;
+}
+
+########################################################################
+sub inline_image_tag {
+########################################################################
+  my ($filename) = @_;
+
+  croak "usage: inline_image_tag(filename)\n"
+    if !$filename;
+
+  my $ext = lc $filename;
+  $ext =~ s{.*[.]}{}xsm;  # extract file extension
+
+  my %mime_type_for = (
+    png  => 'image/png',
+    jpg  => 'image/jpeg',
+    jpeg => 'image/jpeg',
+    gif  => 'image/gif',
+    svg  => 'image/svg+xml',
+    webp => 'image/webp',
+  );
+
+  my $mime = $mime_type_for{$ext};
+
+  croak "unsupported type $ext\n"
+    if !$mime;
+
+  local $RS = undef;
+
+  open my $fh, '<', $filename
+    or croak "could not open $filename for reading\n";
+
+  my $data = <$fh>;
+
+  close $fh;
+
+  my $b64 = encode_base64( $data, $EMPTY );
+
+  return sprintf '<img src="data:%s;base64,%s" />', $mime, $b64;
 }
 
 ########################################################################
@@ -204,3 +445,376 @@ sub validate_document_id {
 }
 
 1;
+
+__END__
+
+=pod
+
+=head1 NAME
+
+DocConverter::Handler
+
+=head1 SYNOPSIS
+
+  # Upload a document for conversion
+  POST /converter
+    Form field: upload=<file>
+    Response: {
+      "filename": "...",
+      "content_type": "...",
+      "tempname": "...",
+      "document_id": "..."
+    }
+
+  # Poll the status of a conversion task
+  GET /converter/status/<document-id>
+    Response: {
+      "status": "pending",
+      "data": {}
+    }
+    ...or...
+    {
+      "status": "complete",
+      "data": { ... }
+    }
+
+  # Retrieve the converted file
+  GET /converter/<document-id>
+
+  # Wake up the background processor to reduce conversion latency
+  GET /converter/wake-up
+
+=head1 DESCRIPTION
+
+This module implements a simple document conversion API designed to
+operate under mod_perl 2, backed by Amazon S3 and SQS for persistent
+storage and task coordination.
+
+The primary interface consists of a set of HTTP endpoints under the
+C</converter> URI path, supporting document uploads, asynchronous
+conversion tracking, and downloads of converted results.
+
+A singleton C<$DOC_CONVERTER> object (an instance of
+L<DocConverter::Client>) is lazily initialized at server startup using
+configuration from a F<doc-converter-handler.yml> file or environment
+overrides. It encapsulates access to S3, SQS, and other backend
+details.
+
+The lifecycle of a conversion task is:
+
+=over 4
+
+=item *
+
+A client uploads a document via C<POST /converter>. The server
+responds with a C<document_id> and metadata.
+
+=item *
+
+The client polls C<GET /converter/status/E<lt>document-idE<gt>> until
+the document is ready.
+
+=item *
+
+Once complete, the client can retrieve the result using C<GET
+/converter/E<lt>document-idE<gt>>.
+
+=item *
+
+If the background queue processor is idle or backing off, calling
+C<GET /converter/wake-up> nudges it to resume 1-second polling,
+reducing perceived latency.
+
+=back
+
+The module is designed to be stateless, horizontally scalable, and
+asynchronous. In future versions, support will be added for C<thumb>
+query parameters at upload time to request preview thumbnails of
+specified dimensions (e.g., C<thumb=100x>, C<thumb=250x150>).
+
+=head1 METHODS AND SUBROUTINES
+
+=head2 handler
+
+=head2 _api_wake_up
+
+  my $status = _api_wake_up($r);
+
+Sends a wake-up signal to the background document conversion handler
+via an SQS queue.  This signal is a no-op message whose only purpose
+is to prompt the handler to reset its internal sleep interval, causing
+it to poll for new messages more frequently — typically dropping back
+to a 1-second interval.
+
+This is useful for reducing latency after a period of inactivity,
+ensuring that newly uploaded documents are picked up for conversion
+without delay.
+
+=over 4
+
+=item *
+
+C<$r> — The Apache request object.
+
+=back
+
+Returns C<Apache2::Const::HTTP_ACCEPTED> to indicate that the signal
+was successfully queued.
+
+=head2 _api_status
+
+  my $status = _api_status($r, $api, $document_id);
+
+Returns the status of a document conversion task identified by
+C<$document_id>, in JSON format. This endpoint is designed for
+polling: clients can repeatedly call it until the status transitions
+from C<pending> to C<complete>.
+
+If the document is still being processed, the response will include:
+
+  {
+    "status": "pending",
+    "data": {}
+  }
+
+Once the document is ready, the response will include:
+
+  {
+    "status": "complete",
+    "data": { ... }
+  }
+
+The structure of the C<data> field is determined by the conversion
+handler and may include fields such as C<pdf>, C<conversion_time>,
+C<filename>, etc.
+
+=over 4
+
+=item *
+
+C<$r> — The Apache request object.
+
+=item *
+
+C<$api> — (Unused) Included for consistent API handler signatures.
+
+=item *
+
+C<$document_id> — The UUID of the document whose status is being
+queried.
+
+=back
+
+Returns C<Apache2::Const::OK> after writing a JSON object to the
+response.
+
+=head2 _api_upload
+
+  my $status = _api_upload($r, $api);
+
+Handles a file upload request and stores the document in persistent S3
+storage for asynchronous conversion. This endpoint accepts a single
+file (under the form field C<upload>) and returns metadata about the
+file, including a unique document ID that can be used to poll the
+conversion status or retrieve the converted result.
+
+The uploaded file is not processed immediately. Instead, it is staged
+and queued for conversion by a background worker.
+
+The response is a JSON object with at least the following keys:
+
+  {
+    "filename":     "original.docx",
+    "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "document_id":  "UUID-OF-UPLOADED-DOCUMENT"
+  }
+
+Clients should extract the C<document_id> and use it with the
+C</status> and C</download> API endpoints.
+
+=over 4
+
+=item *
+
+C<$r> — The Apache request object.
+
+=item *
+
+C<$api> — (Unused) Included for consistent API handler signatures.
+
+=back
+
+=head3 Future Extensions
+
+This endpoint may accept one or more C<thumb> query parameters in the
+format:
+
+  thumb=100x        # height 100, width inferred or defaulted
+  thumb=250x150     # height 250, width 150
+
+Each C<thumb> parameter will request a preview image of the converted
+document in the specified dimensions.
+
+=returns
+
+Returns C<Apache2::Const::OK> on success and writes a JSON
+response. Returns C<HTTP_BAD_REQUEST> if the upload fails.
+
+=head2 _api_download
+
+  my $status = _api_download($r, $api, $document_id);
+
+Handles the API request to download a previously converted document by
+its ID. This method retrieves the file's metadata and content from the
+conversion backend, sets the appropriate HTTP headers for content type
+and disposition, and streams the file content to the client.
+
+The content is served as either C<inline> (for PDFs) or C<attachment>
+(for all other types), with a filename provided in the metadata. If
+the download fails, an error is logged and the response continues with
+HTTP OK status.
+
+This method is intended for internal use only.
+
+=over 4
+
+=item *
+
+C<$r> — The Apache request object.
+
+=item *
+
+C<$api> — Ignored in this context but provided for interface symmetry.
+
+=item *
+
+C<$document_id> — The UUID of the document to be downloaded.
+
+=back
+
+Returns C<Apache2::Const::OK>.
+
+=head2 validate_document_id
+
+  my $is_valid = validate_document_id($document_id);
+
+Checks whether the given C<$document_id> matches the expected UUID
+format. Returns a true value if the ID is a valid UUID (consisting of
+hexadecimal digits and hyphens in the standard 8-4-4-4-12 format), or
+false otherwise.
+
+=head1 APACHE SETUP
+
+This module is designed to be deployed under mod_perl2 as a
+high-performance replacement for the legacy CGI-based document
+converter handler. It can be conditionally enabled in Apache using an
+C<IfDefine> block that distinguishes between mod_perl and CGI modes.
+
+The following Apache configuration sets up the handler under the
+C</converter> path:
+
+  # Load the handler module
+  PerlModule DocConverter::Handler
+
+  # Pass required environment variables to the mod_perl process
+  PerlPassEnv AWS_BUCKET_NAME
+  PerlPassEnv AWS_ENDPOINT_URL
+  PerlPassEnv AWS_QUEUE_URL
+  PerlPassEnv AWS_ACCESS_KEY_ID
+  PerlPassEnv AWS_SECRET_ACCESS_KEY
+
+  # Mount the handler at /converter
+  <LocationMatch "^/converter/?">
+    SetHandler perl-script
+    Require all granted
+    PerlResponseHandler DocConverter::Handler
+  </LocationMatch>
+
+To enable the legacy CGI version instead (e.g., for development or
+backward compatibility), define the C<ENABLE_CGI> directive at Apache
+startup:
+
+  # CGI fallback
+  Action doc-converter /cgi-bin/doc-converter.cgi virtual
+
+  <Location /converter>
+    AcceptPathInfo On
+    SetHandler doc-converter
+    Require all granted
+  </Location>
+
+The mod_perl version offers significantly improved performance and
+lower overhead, particularly under concurrent load. The CGI handler
+can still be found at:
+
+  https://github.com/rlauer6/doc-converter.git
+
+=head1 CONFIGURATION
+
+The handler relies on a YAML configuration file typically named
+F<doc-converter-handler.yml>, used to initialize the shared
+L<DocConverter::Client> object. This configuration is also used by the
+L<SQS::Queue::Worker::DocConverter> module, which performs the actual
+document conversion in response to queued messages.
+
+A typical configuration file might look like this:
+
+  queue_url: http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/doc-converter
+  visibility_timeout: 20
+  max_children: 3
+  poll_interval: 1
+  bucket_name: doc-converter
+  worker: DocConverter
+  log_level: debug
+  endpoint_url: http://localstack:4566
+  log4perl_conf:
+    - log4perl.rootLogger = INFO, SCREEN
+    - log4perl.appender.SCREEN = Log::Log4perl::Appender::Screen
+    - log4perl.appender.SCREEN.stderr = 1
+    - log4perl.appender.SCREEN.layout = PatternLayout
+    - log4perl.appender.SCREEN.layout.ConversionPattern = [%d] %p %m%n
+    - log4perl.appender.LOGFILE = Log::Log4perl::Appender::File
+    - log4perl.appender.LOGFILE.filename = /var/log/sqs-doc-converter.log
+    - log4perl.appender.LOGFILE.mode = append
+    - log4perl.appender.LOGFILE.layout = PatternLayout
+    - log4perl.appender.LOGFILE.layout.ConversionPattern = [%d] %p %m%n
+
+=head2 Deployment Notes
+
+Both the mod_perl API handler (this module) and the SQS worker (e.g.,
+run under systemd or as a background daemon) may be deployed in the
+same container or instance, or separately for horizontal
+scalability. The backend is designed to be stateless, and multiple
+HTTP frontends or workers can share the same configuration, S3 bucket,
+and queue.
+
+=head2 Configuration Precedence
+
+The YAML file is loaded from the distribution’s shared file directory
+(via L<File::ShareDir>).  Values from the environment (e.g.,
+C<AWS_ENDPOINT_URL>) override YAML values where specified:
+
+  - C<AWS_ENDPOINT_URL>
+  - C<AWS_BUCKET_NAME>
+  - C<AWS_QUEUE_URL>
+
+This enables flexible configuration in containerized or cloud
+environments.
+
+=head1 AUTHOR
+
+Rob Lauer - <rlauer@treasurersbriefcase.com>
+
+=head1 LICENSE
+
+Copyright 2025, TBC Development Group, LLC. All rights reserved.
+
+This program is free software; you can redistribute it                                                                                                                                                                              
+and/or modify it under the same terms as Perl itself.
+
+=head1 SEE ALSO
+
+L<Apache2::Request>, L<Apache2::RequestRec>,
+L<SQS::Queue::Worker::DocConverter>
+
+=cut

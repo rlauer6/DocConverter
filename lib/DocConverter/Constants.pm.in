@@ -25,6 +25,7 @@ Readonly::Scalar our $DASH  => q{-};
 Readonly::Scalar our $SLASH => q{/};
 Readonly::Scalar our $SPACE => q{ };
 Readonly::Scalar our $EMPTY => q{};
+Readonly::Scalar our $COMMA => q{,};
 
 # http
 Readonly::Scalar our $HTTP_NOT_FOUND    => '404';
@@ -48,6 +49,7 @@ Readonly::Scalar our $DEFAULT_SLEEP_INTERVAL => 1;
 Readonly::Scalar our $BUFFER_SIZE            => 4096;
 Readonly::Scalar our $DEFAULT_BASE_URL       => '/converter';
 Readonly::Scalar our $DEFAULT_HOST           => 'http://localhost:4566';
+Readonly::Scalar our $DEFAULT_MAX_KEYS       => 20;
 
 # log4perl
 Readonly::Hash our %LOG_LEVELS => (
@@ -67,6 +69,7 @@ our @EXPORT = qw(
   $SLASH
   $SPACE
   $EMPTY
+  $COMMA
   %MIME_TYPES
   $HTTP_NOT_FOUND
   $HTTP_OK
@@ -76,6 +79,7 @@ our @EXPORT = qw(
   $BUFFER_SIZE
   $DEFAULT_HOST
   $DEFAULT_BASE_URL
+  $DEFAULT_MAX_KEYS
   %LOG_LEVELS
   $PDFINFO
   $CONVERT

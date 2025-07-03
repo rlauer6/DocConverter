@@ -76,7 +76,7 @@ README.md: lib/$(MODULE_PATH)
 	pod2markdown $< > $@
 
 clean:
-	find lib -name '*.pm' -exec rm {} \;
+	find lib -name '*.pm' -exec rm -f {} \;
 	rm -f *.tar.gz
 	rm -f provides extra-files resources
 
@@ -103,27 +103,4 @@ $(IMAGE_ID_FILE): Dockerfile $(TARBALL)
 docker-clean:
 	rm -f $(IMAGE_ID_FILE)
 
-.PHONY: version release minor major
-
-version:
-	@if [[ "$$bump" = "release" ]]; then \
-	  bump=2; \
-	elif [[ "$$bump" = "minor" ]]; then \
-	  bump=1; \
-	elif [[ "$$bump" = "major" ]]; then \
-	  bump=0; \
-	fi; \
-	ver=$$(cat VERSION); \
-	v=$$(echo $${bump}.$$ver | \
-	  perl -a -F[.] -pe '$$i=shift @F;$$F[$$i]++;$$j=$$i+1;$$F[$$_]=0 for $$j..2;$$"=".";$$_="@F"'); \
-	echo $$v >VERSION;
-	@cat VERSION
-
-release:
-	@$(MAKE) -s version bump=release
-
-minor:
-	@$(MAKE) -s version bump=minor
-
-major:
-	@$(MAKE) -s version bump=major
+include version.mk

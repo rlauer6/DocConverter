@@ -38,7 +38,7 @@ sub send_message {
 ########################################################################
 sub init_sqs_client {
 ########################################################################
-  my ($self) = @_;
+  my ( $self, $log_level ) = @_;
 
   $self->set_credentials(
     Amazon::Credentials->new(
@@ -48,11 +48,11 @@ sub init_sqs_client {
   );
 
   my $sqs_client = Amazon::API::SQS->new(
-    logger      => $self->get_logger,
-    log_level   => $ENV{AWS_API_LOGLEVEL} // 'info',
     url         => $self->get_endpoint_url,
     credentials => $self->get_credentials,
   );
+
+  $sqs_client->init_log_level( log_level => $log_level );
 
   $self->set_sqs_client($sqs_client);
 

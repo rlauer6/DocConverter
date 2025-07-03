@@ -1,17 +1,16 @@
-#!/usr/bin/env perl
 package DocConverter::Role::Helpers;
 
 use strict;
 use warnings;
 
-use Data::Dumper;
-use English qw(no_match_vars);
 use Carp;
+use Data::Dumper;
 use DocConverter::Constants;
-use File::Basename qw(basename fileparse);
+use English qw(no_match_vars);
+use File::Basename qw(basename fileparse dirname);
 use File::Temp qw(tempfile tempdir);
-use JSON;
 use IPC::Run qw(run);
+use JSON;
 use Time::HiRes qw(gettimeofday tv_interval);
 
 use Role::Tiny;
@@ -44,7 +43,7 @@ sub execute {
 ########################################################################
   my ( $self, @cmd ) = @_;
 
-  $self->get_logger->debug( Dumper( [ @cmd => \@cmd ] ) );
+  $self->get_logger->debug( Dumper( [ cmd => \@cmd ] ) );
 
   my $out = $EMPTY;
   my $err = $EMPTY;
@@ -80,6 +79,7 @@ sub cvt2png {
     '-gravity'    => 'center',
     '-crop'       => $size . '+0+0!',
     '-background' => 'transparent',
+    $infile,
     $outfile;
 
   return $self->execute(@cmd);
@@ -97,8 +97,10 @@ sub create_preview {
 
   $options{outfile} = sprintf '%s%s-%s.png', $path, $name, $w;
 
+  # attempt to create a .png from a .pdf
   $self->cvt2png(%options);
 
+  # sometimes that does not work...so try to convert to ps first
   if ( !-s $options{outfile} ) {
     my ( undef, $tempfile ) = tempfile;
 
@@ -156,19 +158,6 @@ sub benchmark {
 }
 
 ########################################################################
-sub create_outfile {
-########################################################################
-  my ( $file, $infile ) = @_;
-
-  my ( $name, undef, $ext ) = fileparse( $file, qr/[.][^.]*/xsm );
-  $name ||= $ext;  # ex: .emacs
-
-  my ( undef, $path ) = fileparse( $infile, qr/[.][^.]*/xsm );
-
-  return ( $name, sprintf '%s%s.pdf', $path, $name );
-}
-
-########################################################################
 sub doc2pdf {
 ########################################################################
   my ( $self, %args ) = @_;
@@ -204,7 +193,7 @@ sub doc2pdf {
 }
 
 ########################################################################
-sub find_file_in_folder {
+sub fetch_document {
 ########################################################################
   my ( $self, $document_id ) = @_;
 
@@ -213,10 +202,9 @@ sub find_file_in_folder {
   croak sprintf "unable to list bucket for %s: %s\n", $document_id, $self->get_s3_client->errstr
     if !$list || !@{ $list->{keys} };
 
-  croak sprintf "more than one document in folder %s, don't know what to convert!\n", $document_id
-    if @{ $list->{keys} } != 1;
+  my ($file) = grep {/${document_id}[.]dat/xsm} map { $_->{key} } @{ $list->{keys} };
 
-  return basename( $list->{keys}->[0]->{key} );
+  return $self->get_object( $document_id, $file );
 }
 
 ########################################################################
@@ -224,23 +212,27 @@ sub convert_document {
 ########################################################################
   my ( $self, %args ) = @_;
 
-  my ( $document_id, $file, $pdf, $thumb ) = @args{qw(document_id file pdf thumb)};
+  my ( $document_id, $pdf, $thumb, $content_type ) = @args{qw(document_id pdf thumb content_type)};
 
   $self->benchmark;
 
-  my $infile = eval {
-    $file //= $self->find_file_in_folder($document_id);
-    return $self->get_object( $document_id, $file );
-  };
+  my $infile = eval { return $self->fetch_document($document_id); };
 
   if ( !$infile || !-s $infile || $EVAL_ERROR ) {
-    $self->get_logger->error($EVAL_ERROR);
+    $self->get_logger->error(
+      Dumper(
+        [ error       => $EVAL_ERROR,
+          size        => ( -s $infile ),
+          document_id => $document_id,
+        ]
+      )
+    );
 
     $self->write_status_file(
       $document_id,
       { document_id => $document_id,
         errstr      => $self->get_s3_client->errstr,
-        error       => $EVAL_ERROR // 'unknown error',
+        error       => $EVAL_ERROR || 'unknown error',
       }
     );
 
@@ -249,11 +241,11 @@ sub convert_document {
 
   $self->benchmark('s3_time');
 
-  my %result = ( 'document-id' => $document_id );
+  my %result = ( document_id => $document_id );
 
-  my ( $name, $outfile ) = create_outfile( $file, $infile );
+  my $outfile = sprintf '%s/%s.pdf', dirname($infile), $document_id;
 
-  $self->get_logger->info( Dumper( [ outfile => $outfile, infile => $outfile ] ) );
+  $self->get_logger->info( Dumper( [ outfile => $outfile, infile => $infile ] ) );
 
   if ($pdf) {
     my $metadata = $self->doc2pdf(
@@ -263,12 +255,13 @@ sub convert_document {
     );
 
     $self->benchmark('libreoffice_time');
+
     if ( exists $metadata->{err_file} ) {
-      $self->put_object( $document_id, $metadata->{err_file} );
+      $self->put_object( prefix => $document_id, file => $metadata->{err_file} );
     }
     else {
       $result{pdf} = $metadata;
-      $self->put_object( $document_id, $outfile );
+      $self->put_object( prefix => $document_id, file => $outfile );
       $self->benchmark('s3_time');
     }
   }
@@ -276,7 +269,7 @@ sub convert_document {
   if ($thumb) {
     my $meta_data = $self->create_thumb_nails(
       thumb       => $thumb,
-      infile      => $outfile,
+      infile      => $content_type =~ /png|jpe?g/xsm ? $infile : $outfile,
       document_id => $document_id
     );
 
@@ -312,7 +305,7 @@ sub write_status_file {
 
   close $fh;
 
-  $self->put_object( $document_id, $status_file );
+  $self->put_object( prefix => $document_id, file => $status_file );
 
   return;
 }
@@ -324,7 +317,7 @@ sub create_thumb_nails {
 
   my ( $thumb, $infile, $document_id ) = @args{qw(thumb infile document_id)};
 
-  my @thumb_list = @{ $thumb || [] };
+  my @thumb_list = ref $thumb ? @{$thumb} : ($thumb);
 
   return
     if !-s $infile || !@thumb_list;
@@ -352,7 +345,7 @@ sub create_thumb_nails {
       s3   => sprintf( 's3://%s/%s/%s%s', $self->get_bucket_name, $document_id, $name, $ext ),
       };
 
-    $self->put_object( $document_id, $thumbnail_file );
+    $self->put_object( prefix => $document_id, file => $thumbnail_file );
   }
 
   $self->benchmark('s3_time');

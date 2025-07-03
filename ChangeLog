@@ -1,3 +1,99 @@
+Thu Jul  3 14:09:58 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.4]:
+	* TODO.md
+	* upload.js: new
+	* upload.html: new
+	* VERSION: bump
+	* Makefile
+	- use version.mk
+	- rm -f .pm files
+	* doc-converter-handler.yml: + max_sleep_period
+	* docker-compose.yml
+	- upload.js, apache.conf
+	* lib/DocConverter/Client.pm.in
+	- remove bucket_name attribute, move to DocConverter::Role::S3
+	(get_document_status): minor refactor
+	(download_file): download .dat file
+	(upload_file)
+	- upload as {document-id}.dat
+	- only send message if we are going to convert or create thumbs
+	- pass key/value pairs to put_object
+	(new)
+	- no_logger
+	* lib/DocConverter/Constants.pm.in
+	- + $COMMA, $DEFAULT_MAX_KEYS
+	* lib/DocConverter/Handler.pm.in
+	- pod
+	- add versioning
+	- DOC_CONVERTER_AUTH
+	- set DocConverter::Client logger to Apache's logger
+	(handler):
+	- parse parameters from query string and pass to APIs
+	- new endpoints: /converter/list, /converter/version
+	- new method: DELETE
+	(get_session_cookie): new
+	(_api_version): new
+	(_api_delete): new
+	(_api_list): new
+	(_api_upload)
+	- no need to link, just pass tempfile to upload_file
+	- set document_id element in metadata
+	- send thumb parameters to upload_file
+	- default action = 'store'
+	- add upload time, date to metadata
+	(_api_metadata): new
+	(_api_download)
+	- SERVER_ERROR if $EVAL_ERROR
+	- support downloading .pdf, .png and preview tag
+	(inline_image_tag): new
+	* lib/DocConverter/Role/Helpers.pm.in
+	(cvt2png): + $infile
+	(create_outfile): removed
+	(find_in_folder) => (fetch_document)
+	- return .dat file
+	(convert_document)
+	- removed file parameter
+	- fix log message
+	- pass key/value pairs to put object
+	- fetch_document
+	- document_id, not document-id return element
+	- create thumbs from original file, not .pdf if .png or .jpe?g
+	(write_status): pass key/value pairs
+	(create_thumb_nails)
+	- likewise
+	- thumb is ref or scalar
+	* lib/DocConverter/Role/S3.pm.in
+	- + bucket-name, max_keys
+	(init_s3_client): accept bucket_name
+	(put_object)
+	- accept key/value pairs
+	- accept name to store object as
+	- use bucket()
+	(fetch_metadata): new
+	(s3_client): new
+	(bucket): new
+	(fetch_object): new
+	(get_object)
+	- raw flag to return value, not tmpfile
+	(list_folders): new
+	(list_folder): new
+	(_list_folder): new
+	(fetch_folders): new
+	(list_bucket): use bucket()
+	* lib/DocConverter/Role/SQS.pm.in
+	(init_sqs_client)
+	- accept log_level arg
+	- set Amazon::API::SQS log level from passed arg
+	* lib/DocConverter/Utils.pm.in
+	- remove list_bucket, moved to DocConverter::Role::S3
+	(init_logger): call easy_init only if not initialized
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	(handler)
+	- -pdf parameter
+	- send action, content_type to convert_document
+	* version.mk: new
+
 Sat Jun 28 15:04:54 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.3]:

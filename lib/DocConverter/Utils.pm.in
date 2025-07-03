@@ -41,7 +41,6 @@ our @EXPORT = qw(
   $LOG_LEVEL
   fetch_from_s3
   init_logger
-  list_bucket
   put_to_s3
   slurp
 );
@@ -73,7 +72,10 @@ sub init_logger {
 
   $LOG_LEVEL = $LOG_LEVELS{ lc $level } // $INFO;
 
-  Log::Log4perl->easy_init($LOG_LEVEL);
+  if ( !Log::Log4perl->initialized ) {
+    Log::Log4perl->easy_init($LOG_LEVEL);
+  }
+
   $LOGGER = Log::Log4perl->get_logger();
 
   return $LOGGER;
@@ -105,14 +107,6 @@ sub fetch_from_s3 {
   return -s $outfile ? $outfile : $EMPTY;
 }
 
-########################################################################
-sub list_bucket {
-########################################################################
-  my ( $bucket, $document_id ) = @_;
-
-  return $bucket->list( { prefix => $document_id } );
-}
-
 1;
 
 __END__
@@ -130,8 +124,6 @@ DocConverter::Utils
  put_to_s3( $bucket, $document_id, $file );
 
  get_from_s3( $bucket, $document_id, $file );
-
- list_bucket( $bucket );
 
  my $creds = get_ec2_credentials();
 

@@ -2,6 +2,7 @@ queue_url: http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/doc
 visibility_timeout: 20
 max_children: 3
 poll_interval: 1
+max_sleep_period: 10
 bucket_name: doc-converter
 worker: DocConverter
 log_level: debug
