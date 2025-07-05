@@ -26,12 +26,6 @@ $(function () {
         }
     });
 
-    $('#create-preview').on('change', function () {
-        const enabled = this.checked;
-        $('#preview-height').prop('disabled', !enabled);
-        $('#preview-width').prop('disabled', !enabled);
-    });
-
     // ---------------------------------------------------------------------
     $('#upload-form').on('submit', function (e) {
         e.preventDefault();
@@ -46,7 +40,7 @@ $(function () {
         const $row = $(`
         <div class="file-row">
           <strong>${file.name}</strong>
-          <button disabled>Download PDF</button>
+          <button disabled>Download</button>
           <div class="spinner"></div>
           <div class="metadata"></div>
         </div>
@@ -62,20 +56,8 @@ $(function () {
         var tags = encodeURIComponent($('#tags').val());
         console.log(tags);
 
-        let query = '?action=' + action + '&tags=' + tags;
-
-        if ($('#create-preview').is(':checked')) {
-            var h = $('#preview-height').val();
-            if (! h ) {
-                h = 100;
-            }
-            var w = $('#preview-width').val();
-            if ( ! w ) {
-                w = '';
-            }
-            var thumb = `${h}x${w}`;
-            query = query + '&thumb=' + thumb;
-        }
+        var thumbnails = $('#thumbnails').is(':checked') ? 1 : 0;
+        let query = '?action=' + action + '&tags=' + tags + '&thumbnails=' + thumbnails;
 
         $.ajax({
             url: `/converter${query}`,
@@ -99,7 +81,7 @@ $(function () {
 function pollStatus(documentId, $row, $button, $spinner, $meta) {
     const url = `/converter/status/${documentId}`;
     const start = Date.now();
-    const timeout = 15000; // 15 seconds
+    const timeout = 20000; // 20 seconds
 
     function doPoll() {
         const elapsed = Date.now() - start;
@@ -127,12 +109,13 @@ function pollStatus(documentId, $row, $button, $spinner, $meta) {
 
                 const pdf = data.pdf || {};
                 const t = (data.conversion_time && data.conversion_time.t) || {};
-
+                const thumb = 'thumbs' in data ? data.thumbs.thumbnail.tag : '';
                 const html = `
                   <div><strong>Document ID:</strong> ${data.document_id}</div>
                   <div><strong>Elapsed Time:</strong> ${t.elapsed_time ?? 'N/A'} s</div>
                   <div><strong>Pages:</strong> ${pdf.pages ?? 'N/A'}</div>
                   <div><strong>Size:</strong> ${pdf.size ?? 'N/A'} bytes</div>
+                  <div>${thumb}</div>
                 `;
 
                 $meta.html(html);

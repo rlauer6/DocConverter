@@ -14,6 +14,7 @@ GCONSTANTS = $(CONSTANTS:.pm.in=.pm)
 PERL_MODULES = \
     lib/$(MODULE_PATH).in \
     lib/DocConverter/Utils.pm.in \
+    lib/DocConverter/Authorize.pm.in
 
 CLIENT = \
     lib/DocConverter/Client.pm.in

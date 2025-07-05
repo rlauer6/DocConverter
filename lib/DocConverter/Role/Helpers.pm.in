@@ -6,6 +6,7 @@ use warnings;
 use Carp;
 use Data::Dumper;
 use DocConverter::Constants;
+use DocConverter::Utils;
 use English qw(no_match_vars);
 use File::Basename qw(basename fileparse dirname);
 use File::Temp qw(tempfile tempdir);
@@ -54,7 +55,7 @@ sub execute {
   my $error_code = run( \@cmd, '>', \$out, '2>', \$err );
 
   if ($err) {
-    $self->get_logger->error($err);
+    $self->get_logger->error( sprintf 'execute: %s' . $err );
   }
 
   $self->set_error($err);
@@ -98,6 +99,14 @@ sub create_preview {
 
   $options{outfile} = sprintf '%s%s-%s.png', $path, $name, $w;
 
+  my $infile = $options{infile};  # save
+
+  $self->get_logger->debug( 'creating preview: %s => %s', $infile, $options{outfile} );
+
+  if ( $options{infile} =~ /[.]pdf$/xsm ) {
+    $options{infile} = sprintf '%s[0]', $options{infile};
+  }
+
   # attempt to create a .png from a .pdf
   $self->cvt2png(%options);
 
@@ -109,7 +118,7 @@ sub create_preview {
       $PDFTOPS,
       '-f' => 1,
       '-l' => 1,
-      $options{infile},
+      $infile,
       $tempfile
     );
 
@@ -142,6 +151,7 @@ sub benchmark {
         t  => {},
       }
     );
+
     return;
   }
 
@@ -155,7 +165,7 @@ sub benchmark {
 
   $benchmark->{t1} = [gettimeofday];
 
-  return;
+  return $t->{$name};
 }
 
 ########################################################################
@@ -213,7 +223,7 @@ sub convert_document {
 ########################################################################
   my ( $self, %args ) = @_;
 
-  my ( $document_id, $pdf, $thumb, $content_type ) = @args{qw(document_id pdf thumb content_type)};
+  my ( $document_id, $pdf, $thumbnails, $content_type ) = @args{qw(document_id pdf thumbnails content_type)};
 
   $self->benchmark;
 
@@ -248,31 +258,41 @@ sub convert_document {
 
   $self->get_logger->info( Dumper( [ outfile => $outfile, infile => $infile ] ) );
 
-  if ($pdf) {
+  if ( $pdf && $content_type !~ /pdf/xsm ) {
+    $self->get_logger->debug( sprintf 'converting %s to pdf', $infile );
+
     my $metadata = $self->doc2pdf(
       document_id => $document_id,
       infile      => $infile,
       outfile     => $outfile
     );
 
-    $self->benchmark('libreoffice_time');
+    my $conversion_time = $self->benchmark('pdf_conversion_time');
+    $self->get_logger->info( sprintf 'pdf conversion time: %s', $conversion_time );
 
     if ( exists $metadata->{err_file} ) {
+      $self->get_logger->error( 'ERROR: %s', slurp $metadata->{err_file} );
+
       $self->put_object( prefix => $document_id, file => $metadata->{err_file} );
     }
     else {
       $result{pdf} = $metadata;
       $self->put_object( prefix => $document_id, file => $outfile );
+
       $self->benchmark('s3_time');
     }
   }
 
-  if ($thumb) {
-    my $thumb_metadata = $self->create_thumb_nails(
-      thumb       => $thumb,
+  if ($thumbnails) {
+    $self->get_logger->info( sprintf 'creating thumbnails for %s (%s)', $document_id, $infile );
+
+    my $thumb_metadata = $self->create_thumbnails(
+      thumbnails  => $thumbnails,
       infile      => $content_type =~ /png|jpe?g/xsm ? $infile : $outfile,
       document_id => $document_id
     );
+
+    $self->get_logger->debug( Dumper( [ thumb_metadata => $thumb_metadata ] ) );
 
     $result{thumbs} = $thumb_metadata;
   }
@@ -312,47 +332,51 @@ sub write_status_file {
 }
 
 ########################################################################
-sub create_thumb_nails {
+sub create_thumbnails {
 ########################################################################
   my ( $self, %args ) = @_;
 
-  my ( $thumb, $infile, $document_id ) = @args{qw(thumb infile document_id)};
-
-  my @thumb_list = ref $thumb ? @{$thumb} : ($thumb);
+  my ( $thumbnails, $infile, $document_id ) = @args{qw(thumbnails infile document_id)};
 
   return
-    if !-s $infile || !@thumb_list;
+    if !-s $infile || !$thumbnails;
 
-  # create thumbs
-  my @thumbs;
+  my %thumbnail_sizes = (
+    thumbnail => $DEFAULT_THUMBNAIL_SIZE,
+    preview   => $DEFAULT_PREVIEW_SIZE
+  );
 
-  foreach my $thumb_size (@thumb_list) {
-    push @thumbs, $self->create_preview( size => $thumb_size, infile => $infile );
+  my %metadata = ();
+
+  foreach (qw(thumbnail preview)) {
+    my $thumbnail_size = $thumbnail_sizes{$_};
+
+    $metadata{$_} = {};
+    $metadata{$_}->{file} = $self->create_preview(
+      size   => $thumbnail_size,
+      infile => $infile
+    );
   }
 
   $self->benchmark('imagemagick_time');
 
-  $self->get_logger->info( Dumper( [ thumbs => \@thumbs ] ) );
+  foreach ( keys %metadata ) {
+    my $file = delete $metadata{$_}->{file};
 
-  my @thumbnail_metadata;
+    my ( $name, $path, $ext ) = fileparse( $file, qr/[.][^.]*$/xsm );
+    $metadata{$_}->{tag}  = inline_image_tag($file);
+    $metadata{$_}->{name} = "$name$ext";
+    $metadata{$_}->{size} = -s $file;
+    $metadata{$_}->{s3}   = sprintf 's3://%s/%s/%s%s', $self->get_bucket_name, $document_id, $name, $ext;
 
-  foreach my $thumbnail_file (@thumbs) {
-    my ( $name, $path, $ext ) = fileparse( $thumbnail_file, qr/[.][^.]*$/xsm );
-
-    push @thumbnail_metadata,
-      {
-      tag  => inline_image_tag($thumbnail_file),
-      name => "$name$ext",
-      size => ( -s $thumbnail_file ),
-      s3   => sprintf( 's3://%s/%s/%s%s', $self->get_bucket_name, $document_id, $name, $ext ),
-      };
-
-    $self->put_object( prefix => $document_id, file => $thumbnail_file );
+    $self->put_object( prefix => $document_id, file => $file );
   }
 
   $self->benchmark('s3_time');
 
-  return \@thumbnail_metadata;
+  $self->get_logger->info( Dumper( [ metadata => \%metadata ] ) );
+
+  return \%metadata;
 }
 
 ########################################################################

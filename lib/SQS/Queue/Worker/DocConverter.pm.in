@@ -46,8 +46,8 @@ sub handler {
     )
   );
 
-  my ( $bucket_name, $document_id, $action, $thumb )
-    = @{$params}{qw(bucket_name document_id action thumb)};
+  my ( $bucket_name, $document_id, $action, $thumbnails )
+    = @{$params}{qw(bucket_name document_id action thumbnails)};
 
   return $TRUE
     if $action eq 'wake-up';
@@ -63,7 +63,7 @@ sub handler {
   my $result = $self->convert_document(
     document_id  => $document_id,
     pdf          => $action,
-    thumb        => $thumb,
+    thumbnails   => $thumbnails,
     content_type => $metadata->{content_type},
   );
 

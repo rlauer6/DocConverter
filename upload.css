@@ -1,0 +1,70 @@
+div.tagsinput span.tag {
+    background-color: #0074d9;
+    color: white;
+    padding: 2px 8px;
+    margin-right: 5px;
+    border-radius: 3px;
+    display: inline-block;
+}
+.tagsinput span.tag a {
+    color: white !important;
+    font-weight: bold;
+    padding: 0 0px;
+    text-decoration: none;
+    font-family: sans-serif;
+}
+
+.tagsinput span.tag a:hover {
+    color: #ffcccc;
+}
+
+.form-group {
+    margin-bottom: 1em;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.3em;
+}
+
+input[type="number"] {
+    width: 100px;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 2em;
+}
+.file-row {
+    margin-top: 1em;
+    padding: 1em;
+    border: 1px solid #ccc;
+    background-color: #f0f0f0;
+    border-radius: 5px;
+}
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #ccc;
+    border-top: 2px solid #333;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-left: 10px;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+.metadata {
+    margin-top: 0.5em;
+    padding: 0.5em;
+    background-color: #e0e0e0;
+    border-radius: 3px;
+    font-size: 0.95em;
+}
+.metadata div {
+    margin: 0.3em 0;
+}
+button:disabled {
+    opacity: 0.5;
+}

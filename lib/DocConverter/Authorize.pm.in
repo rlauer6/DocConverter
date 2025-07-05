@@ -1,0 +1,23 @@
+package DocConverter::Authorize;
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use DocConverter::Constants;
+use English qw(no_match_vars);
+
+use parent qw(Class::Accessor::Fast);
+
+__PACKAGE__->follow_best_practice;
+__PACKAGE__->mk_accessors(qw(config));
+
+########################################################################
+sub is_owner {
+########################################################################
+  my ( $self, $document_id, $session_cookie ) = @_;
+
+  return $TRUE;
+}
+
+1;

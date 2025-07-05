@@ -292,10 +292,16 @@ sub _api_upload {
 
   my ( $name, undef, $ext ) = fileparse( $upload->filename, qr/[.][^.]+$/xsm );
 
-  my ( $action, $thumb ) = @{$params}{qw(action thumb)};
-  $action ||= 'store';
+  my ( $action, $thumbnails ) = @{$params}{qw(action thumbnails)};
+  $action     //= 'store';
+  $thumbnails //= $TRUE;
 
-  $document_id = $DOC_CONVERTER->upload_file( $upload->tempname, $action, $metadata, $thumb );
+  $document_id = $DOC_CONVERTER->upload_file(
+    file       => $upload->tempname,
+    action     => $action,
+    metadata   => $metadata,
+    thumbnails => $thumbnails
+  );
 
   $metadata->{document_id} = $document_id;
 

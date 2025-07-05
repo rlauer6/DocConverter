@@ -98,14 +98,17 @@ sub download_file {
 ########################################################################
 sub upload_file {
 ########################################################################
-  my ( $self, $file, $action, $metadata, $thumb ) = @_;
+  my ( $self, %args ) = @_;
+
+  my ( $file, $action, $metadata, $thumbnails ) = @args{qw(file action metadata thumbnails)};
 
   my $document_id = $self->create_document_id;
   $metadata->{document_id} = $document_id;
 
   $self->get_logger->info('uploading file...');
   $self->get_logger->info( sprintf '        file: [%s]', $file );
-  $self->get_logger->info( sprintf '      action: [%s]', $action               // q{} );
+  $self->get_logger->info( sprintf '      action: [%s]', $action // q{} );
+  $self->get_logger->info( sprintf '  thumbnails: [%s]', $thumbnails );
   $self->get_logger->info( sprintf '    filename: [%s]', $metadata->{filename} // q{} );
   $self->get_logger->info( sprintf ' document_id: [%s]', $metadata->{document_id} );
 
@@ -124,17 +127,16 @@ sub upload_file {
     content => to_json($metadata)
   );
 
-  if ( $action eq 'pdf' ) {
-    my $message = {
-      document_id => $document_id,
-      bucket_name => $self->get_bucket_name,
-      action      => $action,
-      thumb       => $thumb,
-    };
+  my $message = {
+    document_id => $document_id,
+    bucket_name => $self->get_bucket_name,
+    action      => $action,
+    thumbnails  => $thumbnails,
+  };
 
-    $self->get_logger->info( sprintf 'sending message...%s', $message );
-    $self->send_message($message);
-  }
+  $self->get_logger->info( sprintf 'sending message...%s', $message );
+
+  $self->send_message($message);
 
   return $document_id;
 }

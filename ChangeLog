@@ -1,3 +1,50 @@
+Thu Jul  3 17:13:35 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.6]:
+	* VERSION: bump
+	* doc-converter.conf: LogLevel debug
+	* docker-compose.yml
+	- + upload.css, - apache2.conf
+	* lib/DocConverter/Client.pm.in
+	(upload_file)
+	- use key/value pairs for args
+	- thumbnails is now boolean (create or don't create fixed size thumbanails)
+	- always send message to queue or status won't be written
+	* lib/DocConverter/Constants.pm.in
+	- + $DEFAULT_THUMBNAIL_SIZE, $DEFAULT_PREVIEW_SIZE
+	* lib/DocConverter/Handler.pm.in
+	(_api_upload)
+	- thumbnails is boolean now, not sizes
+	- pass key/value pairs to upload_file() now
+	* lib/DocConverter/Role/Helpers.pm.in
+	- better log messages
+	(create_preview)
+	- create preview for page 1
+	(benchmark): return time for named benchmark
+	(convert_document)
+	- accept boolean $thumbnails
+	- only convert to pdf if not a pdf
+	- renamed libreoffice_time benchmark to pdf_conversion_time
+	- pass boolean $thumbnails to create_thumbnails()
+	(create_thumbnails):
+	- accept boolean $thumbnails
+	- use fixed sizes to create thumbnail and preview
+	- return hash instead of array of thumbnails
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	- thumbnails is now boolean
+	* upload.html
+	- tags
+	- thumbnails is a boolean
+	- removed sizes
+	* upload.js
+	- removed sizes,
+	- send boolean for thumbnails
+	- timeout 20s now, from 15s
+	- tags
+	* upload.css: new
+	* lib/DocConverter/Authorize.pm.in: new
+	* Makefile: add above to build
+
 Thu Jul  3 14:12:18 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.5]:
