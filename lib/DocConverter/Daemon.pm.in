@@ -1,0 +1,11 @@
+package DocConverter::Daemon;
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use English qw(no_match_vars);
+
+our $VERSION = '@PACKAGE_VERSION@';
+
+1;

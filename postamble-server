@@ -1,0 +1,11 @@
+#-*- mode: makefile; -*-
+postamble ::
+
+install::
+	echo "installing postamble"
+	sharedir=$$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocConverter});'); \
+	bindir=$(INSTALLSITEBIN)
+
+
+
+

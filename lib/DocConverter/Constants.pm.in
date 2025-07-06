@@ -21,11 +21,12 @@ Readonly::Scalar our $FAILURE => 1;
 Readonly::Scalar our $SUCCESS => 0;
 
 # chars
-Readonly::Scalar our $DASH  => q{-};
-Readonly::Scalar our $SLASH => q{/};
-Readonly::Scalar our $SPACE => q{ };
-Readonly::Scalar our $EMPTY => q{};
-Readonly::Scalar our $COMMA => q{,};
+Readonly::Scalar our $DASH      => q{-};
+Readonly::Scalar our $SLASH     => q{/};
+Readonly::Scalar our $SPACE     => q{ };
+Readonly::Scalar our $EMPTY     => q{};
+Readonly::Scalar our $COMMA     => q{,};
+Readonly::Scalar our $AMPERSAND => q{&};
 
 # http
 Readonly::Scalar our $HTTP_NOT_FOUND    => '404';
@@ -65,6 +66,7 @@ Readonly::Hash our %LOG_LEVELS => (
 use parent qw(Exporter);
 
 our @EXPORT = qw(
+  $AMPERSAND
   $TRUE
   $FALSE
   $DASH

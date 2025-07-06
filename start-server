@@ -3,32 +3,61 @@
 
 set -euo pipefail
 
+########################################################################
+# Environment variables
+########################################################################
+# AWS_ENDPOINT_URL
+# AWS_BUCKET_NAME
+# AWS_QUEUE_NAME
+# START_QUEUE_DAEMON
+# START_APACHE
+
+########################################################################
 # Configuration
+########################################################################
 QUEUE_SCRIPT="/usr/local/bin/sqs-queue-processor.pl"
 APACHE_BIN="/usr/sbin/apache2ctl"
 LOGFILE="/var/log/sqs-doc-converter.log"
 
-DIST_DIR=$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocConverter});');
+DIST_DIR=$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocConverter});' 2>/dev/null || echo '' );
+DIST_DIR_DAEMON=$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocConverter-Daemon});' 2>/dev/null || echo '');
 
-if [[ -n "$AWS_ENDPOINT_URL" ]]; then
-    aws s3 mb "s3://$AWS_BUCKET_NAME" --endpoint-url "$AWS_ENDPOINT_URL"
-    aws sqs create-queue --queue-name "$AWS_QUEUE_NAME" --endpoint-url "$AWS_ENDPOINT_URL"
+START_APACHE=${START_APACHE:-}
+START_QUEUE_DAEMON=${START_QUEUE_DAEMON:-}
+
+if [[  -n "$START_QUEUE_DAEMON" ]]; then
+    # if we are mocking AWS APIs using LocalStack, then recreate bucket
+    # and queue
+    if [[ -n "$AWS_ENDPOINT_URL" ]]; then
+        : "${AWS_BUCKET_NAME:?Must set AWS_BUCKET_NAME}"
+        : "${AWS_QUEUE_NAME:?Must set AWS_QUEUE_NAME}"
+        aws s3 mb "s3://$AWS_BUCKET_NAME" --endpoint-url "$AWS_ENDPOINT_URL"
+        aws sqs create-queue --queue-name "$AWS_QUEUE_NAME" --endpoint-url "$AWS_ENDPOINT_URL"
+    fi
+
+    # Start the queue daemon in the background or foreground if
+    # running in separate container
+    echo "[$(date +%FT%T)] Starting queue daemon..."
+  
+    if [[ -n "$START_APACHE" ]]; then
+        "$QUEUE_SCRIPT" --config "$DIST_DIR_DAEMON/doc-converter-handler.yml" >> "$LOGFILE" 2>&1 &
+
+        DAEMON_PID=$!
+
+        if kill -0  "$DAEMON_PID" >/dev/null; then
+            echo "[$(date +%FT%T)] Queue daemon started with PID: $DAEMON_PID"
+        else
+            echo "Queue daemon failed to start properly."
+            cat "$LOGFILE"
+            exit 1;
+        fi
+    else
+        exec "$QUEUE_SCRIPT" --config "$DIST_DIR_DAEMON/doc-converter-handler.yml"
+    fi
 fi
 
-# Start the queue daemon in the background
-echo "[$(date +%FT%T)] Starting queue daemon..."
-"$QUEUE_SCRIPT" --config $DIST_DIR/doc-converter-handler.yml >> "$LOGFILE" 2>&1 &
-
-DAEMON_PID=$!
-
-if [[ $(ps -p "$DAEMON_PID" -o pid -h | sed 's/[[:space:]]*//' ) = "$DAEMON_PID" ]]; then
-    echo "[$(date +%FT%T)] Queue daemon started with PID: $DAEMON_PID"
-else
-    echo "Queue daemon failed to start properly."
-    cat $LOGFILE
-    exit 1;
+if [[ -n "$START_APACHE" ]]; then
+    # Start Apache in the foreground
+    echo "[$(date +%FT%T)] Launching Apache in foreground..."
+    exec "$APACHE_BIN" -D FOREGROUND
 fi
-
-# Start Apache in the foreground
-echo "[$(date +%FT%T)] Launching Apache in foreground..."
-exec "$APACHE_BIN" -D FOREGROUND

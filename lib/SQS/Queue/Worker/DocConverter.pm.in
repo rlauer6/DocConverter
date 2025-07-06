@@ -6,6 +6,7 @@ use warnings;
 use Data::Dumper;
 use English qw(no_match_vars);
 use JSON;
+use List::Util qw(none);
 use SQS::Queue::Constants qw(:all);
 
 use Role::Tiny::With;
@@ -24,6 +25,10 @@ __PACKAGE__->mk_accessors(
     document_id
   )
 );
+
+use Readonly;
+
+Readonly::Array our @ACTION_LIST => qw(pdf store);
 
 use parent qw(SQS::Queue::Worker);
 
@@ -52,6 +57,12 @@ sub handler {
   return $TRUE
     if $action eq 'wake-up';
 
+  # only handle supported actions...
+  if ( $action && none { $action eq $_ } @ACTION_LIST ) {
+    $self->get_logger->warn( sprintf 'rejection message. action=%s', $action );
+    return $FALSE;
+  }
+
   $bucket_name //= $self->get_bucket_name;
 
   $self->set_bucket_name($bucket_name);
@@ -74,6 +85,20 @@ sub handler {
     name    => "${document_id}.json",
     content => to_json($metadata)
   );
+
+  if ( $self->get_workflow ) {
+    my @workflow_params = @{ $self->get_workflow->{params} };
+    my $action          = $self->get_workflow->{action};
+
+    my $message = {
+      action => $action,
+      map { ( $_ => $params->{$_} // $EMPTY ) } @workflow_params,
+    };
+
+    $self->get_logger->info( sprintf 'sending workflow message: %s', Dumper( [ message => $message ] ) );
+
+    $self->send_message($message);
+  }
 
   return $TRUE;
 }

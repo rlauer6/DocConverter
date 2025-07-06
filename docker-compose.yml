@@ -26,6 +26,23 @@ services:
       interval: 5s
       timeout: 2s
       retries: 20
+  daemon:
+    read_only: false
+    build:
+      context: ${PWD}
+      dockerfile: ${PWD}/Dockerfile.daemon
+    image: doc-converter-daemon
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_BUCKET_NAME=doc-converter
+      - AWS_QUEUE_NAME=doc-converter
+    tty: true
+    stdin_open: true
   web:
     read_only: false
     build:

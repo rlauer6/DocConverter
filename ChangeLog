@@ -1,3 +1,48 @@
+Sun Jul  6 10:43:27 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.7]:
+	* VERSION: bump
+	* .gitignore: + postamble, *.dockerid
+	* postamble-daemon: new
+	* postamble-server: renamed from postamble
+	* lib/DocConverter/Daemon.pm.in: new
+	* buildspec-daemon.yml: new
+	* Dockerfile.daemon: new
+	* daemon.req: new
+	* exclude-files: new
+	* Dockerfile
+	- remove document conversion packages (libreoffice, etc)
+	- remove policy.xml fixup for ImageMagick (moved to postamble)
+	- START_APACHE
+	* Makefile
+	- + DocConverter::Daemon
+	* doc-converter-handler.yml
+	- + workflow
+	- add file/line numbers to logger
+	* docker-compose.yml
+        - + daemon service
+	* lib/DocConverter/Constants.pm.in
+	- + $AMPERSAND
+	* lib/DocConverter/Handler.pm.in
+	(fetch_config): new
+	(handler)
+	- send key/value pairs to is_owner
+	(_api_upload)
+	- store only unsupported file types
+	* lib/DocConverter/Role/Helpers.pm.in
+	(execute)
+	- fix log message
+	(create_thumbnails)
+	- log at debug level, not info
+	* lib/DocConverter/Role/SQS.pm.in
+	(create_sqs_message): new
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	(handler)
+	- reject unsupported action messages
+	- send message if workflow
+	* requires: remove SQS::Queue::Worker
+	(start_server)
+	- support starting services in different containers
 Thu Jul  3 17:13:35 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.6]:

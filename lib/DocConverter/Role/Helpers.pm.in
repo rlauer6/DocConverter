@@ -55,7 +55,7 @@ sub execute {
   my $error_code = run( \@cmd, '>', \$out, '2>', \$err );
 
   if ($err) {
-    $self->get_logger->error( sprintf 'execute: %s' . $err );
+    $self->get_logger->error( sprintf 'execute: %s', $err );
   }
 
   $self->set_error($err);
@@ -374,7 +374,7 @@ sub create_thumbnails {
 
   $self->benchmark('s3_time');
 
-  $self->get_logger->info( Dumper( [ metadata => \%metadata ] ) );
+  $self->get_logger->debug( Dumper( [ metadata => \%metadata ] ) );
 
   return \%metadata;
 }

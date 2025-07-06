@@ -29,8 +29,7 @@ use English qw(no_match_vars);
 use File::ShareDir qw(dist_dir);
 use File::Basename qw(fileparse);
 use JSON;
-
-use SQS::Queue::Worker qw(fetch_config);
+use YAML::Tiny qw(LoadFile);
 
 our $DOC_CONVERTER;
 our $DOC_CONVERTER_AUTH;
@@ -38,6 +37,33 @@ our $DOC_CONVERTER_AUTH;
 ########################################################################
 BEGIN {
 ########################################################################
+
+########################################################################
+  sub fetch_config {
+########################################################################
+    my ($config_file) = @_;
+
+    return
+      if !$config_file;
+
+    open my $fh, '<', $config_file
+      or croak "could not open $config_file for reading\n";
+
+    local $RS = undef;
+
+    my $content = <$fh>;
+
+    close $fh;
+
+    my $config = $content =~ /^\s*[{]/xsm ? from_json($content) : LoadFile($config_file);
+
+    if ( $config->{log4perl_conf} && ref $config->{log4perl_conf} ) {
+      $config->{log4perl_conf} = join "\n", @{ $config->{log4perl_conf} };
+    }
+
+    return $config;
+  }
+
   my $dist_dir = dist_dir('DocConverter');
 
   my $config = fetch_config("$dist_dir/doc-converter-handler.yml");
@@ -104,9 +130,18 @@ sub handler {
   }
 
   # check document ownwership
-  if ($DOC_CONVERTER_AUTH) {
+  if ( $DOC_CONVERTER_AUTH && $document_id ) {
+    my $client_id      = $params->{client_id} // $EMPTY;
+    my $session_cookie = get_session_cookie($r);
+
+    my $is_owner = $DOC_CONVERTER_AUTH->is_owner(
+      client_id   => $client_id,
+      document_id => $document_id,
+      session     => $session_cookie
+    );
+
     return Apache2::Const::HTTP_FORBIDDEN
-      if $document_id && !$DOC_CONVERTER_AUTH->is_owner( $document_id, get_session_cookie($r) );
+      if !$is_owner;
   }
 
   # GET    /converter/version               => returns API version
@@ -291,10 +326,29 @@ sub _api_upload {
   };
 
   my ( $name, undef, $ext ) = fileparse( $upload->filename, qr/[.][^.]+$/xsm );
-
   my ( $action, $thumbnails ) = @{$params}{qw(action thumbnails)};
-  $action     //= 'store';
-  $thumbnails //= $TRUE;
+
+  my $mime_type = $MIME_TYPES{ $upload->type };
+
+  if ( !$mime_type ) {
+    $r->log->info( sprintf 'unsupported mime type %s, storing only...', $upload->type );
+    $action     = 'store';
+    $thumbnails = $FALSE;
+  }
+  else {
+    $action     //= 'store';
+    $thumbnails //= $TRUE;
+  }
+
+  $r->log->info(
+    sprintf 'uploading file: %s',
+    Dumper(
+      [ metadata   => $metadata,
+        thumbnails => $thumbnails,
+        action     => $action
+      ]
+    )
+  );
 
   $document_id = $DOC_CONVERTER->upload_file(
     file       => $upload->tempname,

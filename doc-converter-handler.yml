@@ -7,14 +7,20 @@ bucket_name: doc-converter
 worker: DocConverter
 log_level: debug
 endpoint_url: http://localstack:4566
+workflow:
+  action: tags
+  params:
+    - tags
+    - document_id
+    - client_id
 log4perl_conf:
   - log4perl.rootLogger = INFO, SCREEN
   - log4perl.appender.SCREEN = Log::Log4perl::Appender::Screen
   - log4perl.appender.SCREEN.stderr = 1
   - log4perl.appender.SCREEN.layout = PatternLayout
-  - log4perl.appender.SCREEN.layout.ConversionPattern = [%d] %p %m%n
+  - log4perl.appender.SCREEN.layout.ConversionPattern = %l [%d] %p %m%n
   - log4perl.appender.LOGFILE = Log::Log4perl::Appender::File
   - log4perl.appender.LOGFILE.filename = /var/log/sqs-doc-converter.log
   - log4perl.appender.LOGFILE.mode = append
   - log4perl.appender.LOGFILE.layout = PatternLayout
-  - log4perl.appender.LOGFILE.layout.ConversionPattern = [%d] %p %m%n
+  - log4perl.appender.LOGFILE.layout.ConversionPattern = %l [%d] %p %m%n

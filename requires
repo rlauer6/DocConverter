@@ -18,6 +18,5 @@ LWP::UserAgent            6.78
 Readonly               2.05
 Role::Tiny                2.002004
 Role::Tiny::With        2.002004
-SQS::Queue::Worker        1.0.0
 XML::Twig   3.44
 YAML::Tiny

@@ -10,3 +10,5 @@ resources
 extra-files
 provides
 modified
+postamble
+*.dockerid

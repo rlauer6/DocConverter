@@ -1,0 +1,34 @@
+project:
+  description: DocConverter Daemon
+  author:
+    name: Rob Lauer
+    mailto: rclauer@gmail.com
+pm_module: DocConverter::Daemon
+min-perl-version: 5.010
+dependencies:
+  requires: daemon.req
+  test_requires: test-requires
+path:
+  pm_module: lib
+  exclude_files: exclude_files
+  scripts: bin
+  tests: t
+postamble: postamble-daemon
+extra-files:
+  - postamble
+  - test.pdf
+  - share:
+    - doc-converter-handler.yml
+    - README.md
+    - ChangeLog
+    - resume-long.docx
+    - postamble
+resources:
+  homepage: http://github.com/rlauer6/DocConverter
+  bugtracker:
+    web: http://github.com/rlauer6/DocConverter
+    mailto: rclauer@gmail.com
+  repository:
+    url: git://github.com/rlauer6/DocConverter
+    web: http://github.com/rlauer6/DocConverter
+    type: 'git'

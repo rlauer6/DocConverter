@@ -10,7 +10,8 @@ use Data::Dumper;
 use DocConverter::Constants;
 use English qw(no_match_vars);
 use Amazon::API::SQS;
-use SQS::Queue::Worker qw(create_sqs_message);
+use List::Util qw(pairs);
+use URI::Escape;
 
 use parent qw(Class::Accessor::Fast);
 
@@ -57,6 +58,24 @@ sub init_sqs_client {
   $self->set_sqs_client($sqs_client);
 
   return $self;
+}
+
+########################################################################
+sub create_sqs_message {
+########################################################################
+  my (@args) = @_;
+
+  return to_json( $args[0] )
+    if ref $args[0];
+
+  my @params;
+
+  foreach my $p ( pairs @args ) {
+    my ( $k, $v ) = @{$p};
+    push @params, sprintf '%s=%s', $k, uri_escape($v);
+  }
+
+  return join $AMPERSAND, @params;
 }
 
 1;

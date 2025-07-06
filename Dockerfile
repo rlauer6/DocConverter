@@ -5,8 +5,7 @@ COPY bookworm-backports.list /etc/apt/sources.list.d/
 RUN apt-get update --fix-missing && apt-get install -y --fix-missing \
     less vim curl git automake less gcc gnupg libzip-dev \
     apache2 apache2-dev libpcre3 libapr1-dev libaprutil1-dev \
-    libssl-dev libperl-dev perl-doc \
-    libpng-dev libexpat-dev imagemagick libreoffice poppler-utils ghostscript \
+    libssl-dev libperl-dev perl-doc libexpat-dev \
     libapache2-mod-perl2 libapache2-mod-perl2-dev libapache2-mod-apreq2
 
 RUN curl -L https://cpanmin.us | perl - App::cpanminus
@@ -23,7 +22,6 @@ RUN for a in $(cat requires|awk '{print $1}');do \
 COPY DocConverter-*.tar.gz .
 RUN cpanm -n -v DocConverter-*.tar.gz
 
-RUN apt-get autoremove --fix-missing -yq && rm -rf /var/lib/apt/lists/*
 
 RUN a2dismod mpm_event
 RUN a2enmod mpm_prefork
@@ -39,12 +37,15 @@ RUN DIST_DIR=$(perl -MFile::ShareDir -e 'print File::ShareDir::dist_dir(q{DocCon
     a2enconf doc-converter
 
 RUN cp /usr/local/bin/doc-converter.pl /usr/lib/cgi-bin/doc-converter.cgi
-RUN sed -ibak 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
-
+RUN apt-get update && apt-get install -y unzip
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 RUN unzip awscliv2.zip
 RUN ./aws/install
 
+ENV START_APACHE=1
 COPY start-server /usr/local/bin/start-server
 RUN chmod +x /usr/local/bin/start-server
+
+RUN apt-get autoremove --fix-missing -yq && rm -rf /var/lib/apt/lists/*
+
 CMD ["/usr/local/bin/start-server"]
