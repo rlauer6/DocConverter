@@ -19,4 +19,6 @@
 [ ] reconcile redundant utility functions
     [ ] create_sqs_message
     [ ] send_message
-
+[ ] Server side encryption
+[ ] Searchable tags
+    [ ] parse file name and add to tags list

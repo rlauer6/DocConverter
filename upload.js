@@ -79,7 +79,7 @@ $(function () {
 
 
 function pollStatus(documentId, $row, $button, $spinner, $meta) {
-    const url = `/converter/status/${documentId}`;
+    const url = `/converter/${documentId}/status`;
     const start = Date.now();
     const timeout = 20000; // 20 seconds
 

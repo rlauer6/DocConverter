@@ -59,7 +59,7 @@ sub handler {
 
   # only handle supported actions...
   if ( $action && none { $action eq $_ } @ACTION_LIST ) {
-    $self->get_logger->warn( sprintf 'rejection message. action=%s', $action );
+    $self->get_logger->warn( sprintf 'rejecting message (action=%s)', $action );
     return $FALSE;
   }
 

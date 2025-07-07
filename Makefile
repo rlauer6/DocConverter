@@ -145,6 +145,6 @@ $(IMAGE_ID_FILE): Dockerfile $(TARBALL)
 	fi
 
 docker-clean:
-	rm -f $(IMAGE_ID_FILE)
+	rm -f $(IMAGE_ID_FILE) $(DAEMON_IMAGE_ID_FILE)
 
 include version.mk

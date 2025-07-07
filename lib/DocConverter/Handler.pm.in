@@ -111,7 +111,7 @@ sub handler {
   my $params = $req->param();
 
   # rethink URLs
-  my ( $api, $document_id ) = $uri =~ /^\/converter\/?([^\/]+)\/?([^\/]+)?$/xsm;
+  my ( $document_id, $api ) = $uri =~ /^\/converter\/?([^\/]+)\/?([^\/]+)?$/xsm;
 
   $api         //= $EMPTY;
   $document_id //= $EMPTY;
@@ -123,10 +123,10 @@ sub handler {
   $r->log->info( sprintf '        uri: [%s]', $r->uri );
   $r->log->info( sprintf '     params: [%s]', join $COMMA, keys %{ $params // {} } );
 
-  # GET /converter/{document-id}
-  if ( !$document_id && validate_document_id($api) ) {
-    $document_id = $api;
-    $api         = $EMPTY;
+  # GET /converter/(list|wake-up)
+  if ( !validate_document_id($document_id) ) {
+    $api         = $document_id;
+    $document_id = $EMPTY;
   }
 
   # check document ownwership
@@ -145,10 +145,10 @@ sub handler {
   }
 
   # GET    /converter/version               => returns API version
-  # GET    /converter/list/{document-id}    => list document objects
+  # GET    /converter/{document-id}/list    => list document objects
   # GET    /converter/list                  => list documents
   # GET    /converter/{document-id}         => retrieve a document or metadata
-  # GET    /converter/status/{document-id}  => return conversion status
+  # GET    /converter/{document-id}/status  => return conversion status
   # GET    /converter/wake-up               => wake-up the queue handler
   # POST   /converter                       => upload a document for conversion
   # DELETE /converter/{document-id}         => delete a document
@@ -159,6 +159,9 @@ sub handler {
       version   => \&_api_version,
       list      => \&_api_list,
       status    => \&_api_status,
+      metadata  => \&_api_metadata,
+      thumbnail => \&_api_thumbnail,
+      preview   => \&_api_thumbnail,
       $EMPTY    => \&_api_download,
       'wake-up' => \&_api_wake_up,
     },
@@ -316,6 +319,9 @@ sub _api_upload {
     $tags = [ split /\s*,\s*/xsm, $tags ];
   }
 
+  my $filename = $upload->filename;
+  push @{$tags}, parse_filename($filename);
+
   my $metadata = {
     tags         => $tags,
     client_id    => $params->{client_id} // $EMPTY,
@@ -365,9 +371,25 @@ sub _api_upload {
 }
 
 ########################################################################
+sub parse_filename {
+########################################################################
+  my ($filename) = @_;
+
+  $filename = lc $filename;
+
+  # Replace all non-alphanumeric characters with underscores
+  $filename =~ s/[^[:alnum:]]+/_/xsmg;
+
+  # Split into words on underscores
+  my @tags = grep {length} split /_+/xsm, $filename;
+
+  return @tags;
+}
+
+########################################################################
 sub _api_metadata {
 ########################################################################
-  my ( $r, $document_id ) = @_;
+  my ( $r, $api, $document_id ) = @_;
 
   my $metadata
     = eval { return $DOC_CONVERTER->fetch_object( prefix => $document_id, key => "$document_id.json" ); };
@@ -385,6 +407,20 @@ sub _api_metadata {
 }
 
 ########################################################################
+sub _api_thumbnail {
+########################################################################
+  my ( $r, $api, $document_id ) = @_;
+
+  my $metadata = $DOC_CONVERTER->fetch_metadata($document_id);
+
+  my $object = $metadata->{result}->{thumbs}->{$api}->{name};
+
+  my $tmpfile = $DOC_CONVERTER->get_object( $document_id, $object );
+
+  return send_file( $r, $tmpfile, 'image/png' );
+}
+
+########################################################################
 sub _api_download {
 ########################################################################
   my ( $r, $api, $document_id, $params ) = @_;
@@ -396,7 +432,7 @@ sub _api_download {
   $r->log->info( sprintf '         type: %s', $type );
   $r->log->info( sprintf '       format: %s', $format );
 
-  return _api_metadata( $r, $document_id )
+  return _api_metadata( $r, $api, $document_id )
     if $type eq 'metadata';
 
   my $metadata = $DOC_CONVERTER->fetch_metadata($document_id);
@@ -423,8 +459,6 @@ sub _api_download {
 
   my $tmpfile = $DOC_CONVERTER->get_object( $document_id, $filename );
 
-  $r->content_type($content_type);
-
   if ( $content_type eq 'text/html' ) {
     my $tag = $metadata->{result}->{thumbs}->[0]->{tag};
     $r->headers_out->set( 'Content-Length' => length $tag );
@@ -441,13 +475,23 @@ sub _api_download {
     $r->headers_out->set( 'Content-Disposition' => $disposition_header );
   }
 
-  $r->headers_out->set( 'Content-Length' => -s $tmpfile );
+  return send_file( $r, $tmpfile, $content_type );
+}
+
+#######################################################################
+sub send_file {
+#######################################################################
+  my ( $r, $file, $content_type ) = @_;
+
+  $r->content_type($content_type);
+
+  $r->headers_out->set( 'Content-Length' => -s $file );
 
   eval {
     my $buf;
 
-    open my $fh, '<', $tmpfile
-      or die "unable to open file $tmpfile\n";
+    open my $fh, '<', $file
+      or die "unable to open file $file\n";
 
     while ( read $fh, $buf, $BUFFER_SIZE ) {
       $r->print($buf);
@@ -457,7 +501,7 @@ sub _api_download {
   };
 
   if ($EVAL_ERROR) {
-    $r->log->error("error downloading $document_id: $EVAL_ERROR");
+    $r->log->error("error downloading file: $EVAL_ERROR");
     return Apache2::Const::SERVER_ERROR;
   }
 
@@ -480,7 +524,9 @@ sub validate_document_id {
 ########################################################################
   my ($document_id) = @_;
 
-  return $document_id =~ /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/xsm;
+  my $is_document_id = $document_id =~ /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/xsm;
+
+  return $is_document_id ? $document_id : $EMPTY;
 }
 
 1;
@@ -505,7 +551,7 @@ DocConverter::Handler
     }
 
   # Poll the status of a conversion task
-  GET /converter/status/<document-id>
+  GET /converter/<document-id>/status
     Response: {
       "status": "pending",
       "data": {}
@@ -520,16 +566,16 @@ DocConverter::Handler
   GET /converter/<document-id>
 
   # Retrieve the converted document
-  GET /converter/<document-id>>?type=pdf
+  GET /converter/<document-id>?type=pdf
 
   # Retrieve a preview
-  GET /converter/<document-id>>?type=preview
+  GET /converter/<document-id>/preview
 
-  # Retrieve an image tag of the preview
-  GET /converter/<document-id>>?type=preview&format=tag
+  # Retrieve a thumbnuail
+  GET /converter/<document-id>/thumbnail
 
   # Retrieve document metadata
-  GET /converter/<document-id>>?type=metadata
+  GET /converter/<document-id>/metadata
     Response:
     {
       "upload_date": "Thu Jul  3 17:11:52 2025",
@@ -548,6 +594,12 @@ DocConverter::Handler
 
   # Delete a document
   DELETE /converter/<document-id>
+
+  # List documents
+  GET /converter/list
+
+  # List folder contents
+  GET /converter/{document-id}/list
 
 =head1 DESCRIPTION
 
@@ -576,13 +628,14 @@ responds with a C<document_id> and metadata.
 
 =item *
 
-The client polls C<GET /converter/status/E<lt>document-idE<gt>> until
+The client polls C<GET /converter/E<lt>document-idE<gt>/status> until
 the document is ready.
 
 =item *
 
-Once complete, the client can retrieve the result using C<GET
-/converter/E<lt>document-idE<gt>>.
+Once complete, the client can retrieve the original document using
+C<GET /converter/E<lt>document-idE<gt>> and the PDF using C<GET
+/converter/E<lt>document-idE<gt>?type=pdf>
 
 =item *
 
@@ -593,13 +646,14 @@ reducing perceived latency.
 =back
 
 The module is designed to be stateless, horizontally scalable, and
-asynchronous. In future versions, support will be added for C<thumb>
-query parameters at upload time to request preview thumbnails of
-specified dimensions (e.g., C<thumb=100x>, C<thumb=250x150>).
+asynchronous.
 
 =head1 METHODS AND SUBROUTINES
 
 =head2 handler
+
+Accepts requests and dispatches them to the appropriate request
+handler.
 
 =head2 _api_wake_up
 
@@ -675,7 +729,7 @@ response.
 
 =head2 _api_upload
 
-  my $status = _api_upload($r, $api);
+  my $status = _api_upload($r, $api, $document_id, $params);
 
 Handles a file upload request and stores the document in persistent S3
 storage for asynchronous conversion. This endpoint accepts a single
@@ -695,7 +749,8 @@ The response is a JSON object with at least the following keys:
   }
 
 Clients should extract the C<document_id> and use it with the
-C</status> and C</download> API endpoints.
+C</converter/E<lt>document-idE<gt>/status> and
+C</converter/E<lt>document-idE<gt> endpoints.
 
 =over 4
 
@@ -709,27 +764,11 @@ C<$api> — (Unused) Included for consistent API handler signatures.
 
 =back
 
-=head3 Future Extensions
-
-This endpoint may accept one or more C<thumb> query parameters in the
-format:
-
-  thumb=100x        # height 100, width inferred or defaulted
-  thumb=250x150     # height 250, width 150
-
-Each C<thumb> parameter will request a preview image of the converted
-document in the specified dimensions.
-
-=returns
-
-Returns C<Apache2::Const::OK> on success and writes a JSON
-response. Returns C<HTTP_BAD_REQUEST> if the upload fails.
-
 =head2 _api_download
 
-  my $status = _api_download($r, $api, $document_id);
+  my $status = _api_download($r, $api, $document_id, $params);
 
-Handles the API request to download a previously converted document by
+Handles the API request to download a previously uploaded document by
 its ID. This method retrieves the file's metadata and content from the
 conversion backend, sets the appropriate HTTP headers for content type
 and disposition, and streams the file content to the client.
@@ -758,6 +797,52 @@ C<$document_id> — The UUID of the document to be downloaded.
 =back
 
 Returns C<Apache2::Const::OK>.
+
+=head2 _api_version
+
+=head2 _api_metadata
+
+=head2 _api_list
+
+  _api_list($r, $api, $document_id, $params);
+
+Handles listing of available documents in the backing store (typically
+an S3-compatible service).
+
+ GET /converter/list
+ GET /converter/{document-id}/list
+
+Endpoints used with this method are currently only available if the
+caller passes the admin's API key in the header (X-API-KEY) and it
+matches the environment variable C<API_KEY>. Set an API key in your
+Apache configuration if you want to allow access to this API.
+
+ PerlSetEnv API_KEY FE2ECA64-5B2E-11F0-94A9-E95AEA477965
+
+The C</convert/list> endpoint supports optional query parameters for
+pagination:
+
+=over 4
+
+=item * C<marker>
+
+The key to start listing after. Acts as a continuation token to
+support pagination.
+
+=item * C<max-keys>
+
+Limits the number of document keys returned. Defaults to a
+backend-defined value if not specified.
+
+=back
+
+Returns a JSON-encoded array of document keys.
+
+Typical usage:
+
+  GET /converter/list?marker=abc&max-keys=10
+
+Returns Apache2::Const::OK with C<application/json> content-type.
 
 =head2 validate_document_id
 
@@ -817,6 +902,144 @@ can still be found at:
 
   https://github.com/rlauer6/doc-converter.git
 
+=head1 SUPPORTED FILE TYPES
+
+Conversion of files to PDF can be done for the following file types:
+
+=over 4
+
+=item * .doc, .docx
+
+=item * .xls, .xlsx
+
+=item * .jpeg, .jpg, .png
+
+=item *.pdf
+
+=back
+
+=head1 THUMBNAILS
+
+When passed a PDF or a supported file type, by default the conversion
+service will create two fixed size thumbnails. The thumbnails sizes
+are 100 (thumbnail) and 400 (preview) pixels in height. Thumbnails are
+created from the first page of the document if there are multiple
+pages. Spreadsheet and document files are converted to PDF first
+before thumbnails are created.
+
+If you do not want thumbnails, pass a false value as the C<thumbnails>
+query string parameter. Unsupported files will only be stored to the
+S3 bucket when they are uploaded.
+
+Thumbnail information is stored in the object's metadata as shown below.
+
+ {
+  ...
+  "result" : {
+     ...
+     "thumbs": {
+        "preview" : {
+           "tag" : "<img ...>",
+            ...
+         },
+        "thumbnail": {
+           "tag" : "<img ...>",
+            ...
+         },
+     }
+   ...
+ }
+
+These elements include a C<tag> element that is an inline image tag
+containing the base 64 encoded representation of the image data. You
+can either access the metadata and extract those elements for
+embedding in your HTML pages or you can retrieve thumbnails using the
+GET method and passing the document ID and either C<thumbnail> or
+C<preview> in the suffix of the URI.
+
+ GET /converter/{document-id}/thumbnail
+
+=head1 METADATA
+
+Uploaded file are stored with metadata and other information alongside
+the file in the S3 bucket. You can retrieve a document's metadata by
+issuing a GET method using the document ID and a query string
+parameter of C<type> set to 'metadata' or with a suffix in the URI of
+metdata.
+
+ GET /converter/{document-id}?type=metadata
+ GET /converter/{document-id}/metadata
+
+  {
+    "upload_time": 1751887423,
+    "document_id": "D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5",
+    "client_id": "",
+    "result": {
+      "document_id": "D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5",
+      "conversion_time": {
+        "t0": [1751887423, 302686],
+        "t1": [1751887433, 247164],
+        "t": {
+          "s3_time": 0.117852,
+          "imagemagick_time": 0.251296,
+          "elapsed_time": 9.94447,
+          "pdf_conversion_time": 9.575322
+        }
+      },
+      "thumbs": {
+        "preview": {
+          "tag": "...",
+          "s3": "s3://doc-converter/D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5/D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5-400.png",
+          "name": "D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5-400.png"
+        },
+        "thumbnail": {
+          "tag": "...",
+          "size": 8178,
+          "s3": "s3://doc-converter/D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5/D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5-70.png",
+          "name": "D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5-70.png"
+        }
+      },
+      "pdf": {
+        "name": "D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5.pdf",
+        "size": 214538,
+        "pages": "1",
+        "s3": "s3://doc-converter/D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5/D6EE758A-5B24-11F0-967C-E5ECB5E9C8D5.pdf"
+      }
+    },
+    "upload_date": "Mon Jul  7 11:23:43 2025",
+    "filename": "patio_wall_along_1_to_3.jpg",
+    "tags": [
+       "foo",
+       "bar"
+    ],
+    "content_type": "image/jpeg"
+  }
+
+Two additional elements can be added to your metadata when the file is
+uploaded. You can send a comma delimited set of tags in the C<tags>
+query string parameter. These will be parsed and stored as an array in
+the file's metadata object. You can also send a parameter to track the
+owner of the file (C<client_id>). These values are stored in the
+metdata object, however they are not currently searchable. Your
+application should track ownership of documents and tags in some
+fashion if you want them to be searchable. Future versions of this
+service may include a search facility.
+
+=head1 WORKFLOWS
+
+There may be situations where document uploads and/or conversions are
+one step in a more elaborate workflow. You can configure the daemon
+handler to send a new message on the queue after your document has
+been stored or converted. Set the C<workflow> parameter in your
+configuration file by adding an C<action> parameter and a C<params>
+element that lists the parameters from the original message you wish
+to pass to a handler that you create that reads from the same queue
+and interprets and handles that message.
+
+The document conversion handler will ignore messages where the
+C<action> parameter is not one that is handles. See
+L<SQS::Queue::Worker> for more details on creating handlers.
+
 =head1 CONFIGURATION
 
 The handler relies on a YAML configuration file typically named
@@ -833,6 +1056,11 @@ A typical configuration file might look like this:
   poll_interval: 1
   bucket_name: doc-converter
   worker: DocConverter
+  workflow:
+    action: tag
+    params:
+      - document_id
+      - tags
   log_level: debug
   endpoint_url: http://localstack:4566
   log4perl_conf:

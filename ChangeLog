@@ -1,3 +1,26 @@
+Mon Jul  7 11:19:37 2025  Rob Lauer  <rlauer6@comcast.net>
+
+	[1.0.8]:
+	* VERSION: bump
+	* Makefile
+	- remove DAEMON_IMAGE_ID_FILE for docker-clean
+	* TODO.md: updates
+	* lib/DocConverter/Handler.pm.in
+	- update pod
+	(handler)
+	- update endpoints and regex to use suffix for action instead of type
+	- added thumbnail, preview, metadata endpoints
+	(_api_upload): parse filename and add to tags
+	(parse_filename): new
+	(_api_thumbnail): new
+	(_api_download)
+	- refactored to use send_file()
+	(send_file): new
+	(validate_document): return document_id on success
+	* lib/SQS/Queue/Worker/DocConverter.pm.in
+	(handler): typo in log message
+	* upload.js: update status endpoint
+
 Sun Jul  6 10:43:27 2025  Rob Lauer  <rlauer6@comcast.net>
 
 	[1.0.7]:
